@@ -1,0 +1,58 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch Chimera",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd",
+            "args": ["--help"],
+            "env": {},
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Launch Chimera Discovery",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd",
+            "args": ["discover", "--provider", "aws", "--help"],
+            "env": {},
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Launch Chimera Generation",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd",
+            "args": ["generate", "--help"],
+            "env": {},
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debug Chimera with AWS",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/cmd",
+            "args": ["discover", "--provider", "aws", "--region", "us-east-1", "--verbose"],
+            "env": {
+                "AWS_REGION": "us-east-1"
+            },
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Test Package",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}",
+            "env": {},
+            "args": [
+                "-test.v"
+            ]
+        }
+    ]
+}

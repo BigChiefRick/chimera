@@ -33,10 +33,13 @@ print_error() {
 }
 
 # Check if we're in the right directory
-if [ ! -f ".chimera-root" ]; then
+if [ ! -f "README.md" ] || ! grep -q "BigChiefRick/chimera" README.md; then
     print_error "Please run this script from the root of the Chimera repository"
     exit 1
 fi
+
+# Create root marker
+touch .chimera-root
 
 print_info "Initializing Go module..."
 if [ ! -f "go.mod" ]; then

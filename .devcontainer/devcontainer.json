@@ -1,14 +1,48 @@
 {
-  "name": "Chimera Development Environment",
+  "name": "Chimera Multi-Cloud Development Environment",
   "image": "mcr.microsoft.com/devcontainers/go:1.21-bullseye",
   "features": {
     "ghcr.io/devcontainers/features/aws-cli:1": {},
-    "ghcr.io/devcontainers/features/terraform:1": {}
+    "ghcr.io/devcontainers/features/azure-cli:1": {},
+    "ghcr.io/devcontainers/features/terraform:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },
   "remoteUser": "vscode",
   "containerEnv": {
     "GO111MODULE": "on",
     "GOPROXY": "https://proxy.golang.org,direct"
   },
-  "postStartCommand": "echo '🚀 Chimera is ready! Go version:' && go version"
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "ms-vscode.vscode-json",
+        "redhat.vscode-yaml",
+        "ms-vscode.azure-account",
+        "googlecloudtools.cloudcode"
+      ],
+      "settings": {
+        "go.toolsManagement.checkForUpdates": "local",
+        "go.useLanguageServer": true,
+        "go.gopath": "/go",
+        "go.goroot": "/usr/local/go"
+      }
+    }
+  },
+  "forwardPorts": [9193, 8080, 3000],
+  "portsAttributes": {
+    "9193": {
+      "label": "Steampipe",
+      "onAutoForward": "notify"
+    },
+    "8080": {
+      "label": "Chimera API",
+      "onAutoForward": "ignore"
+    },
+    "3000": {
+      "label": "Dev Server",
+      "onAutoForward": "ignore"
+    }
+  }
 }

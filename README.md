@@ -63,11 +63,11 @@ Total: 6 resources
 ```
 ┌─────────────────────┐    ┌──────────────────────┐    ┌─────────────────────┐
 │   Cloud Providers   │    │       Chimera        │    │   IaC Templates     │
-│                     │───▶│   Discovery &        │───▶│    Generated        │
-│ AWS ✅ Azure ⏳     │    │   Generation Engine   │    │                     │
-│ GCP ⏳ VMware ⏳    │    │                      │    │ Terraform ⏳       │
-│ KVM ⏳              │    │                      │    │ Pulumi ⏳          │
-└─────────────────────┘    └──────────────────────┘    └─────────────────────┘
+│                     │───▶│   Discovery &       │───▶│    Generated        │
+│ AWS ✅ Azure ⏳    │    │   Generation Engine  │    │                     |
+│ GCP ⏳ VMware ⏳   │    │                      │    │ Terraform ⏳        |
+│ KVM ⏳             │    │                      │    │ Pulumi ⏳           │
+└─────────────────────┘    └───────────────────── ┘    └─────────────────────┘
 ```
 
 ### Core Components:

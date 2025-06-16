@@ -3,7 +3,6 @@ package providers
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -203,11 +202,12 @@ func (c *AWSConnector) discoverVPCs(ctx context.Context, region string) ([]disco
 	return resources, nil
 }
 
-// discoverSubnets discovers subnets
+// discoverSubnets discovers subnets - FIXED VERSION
 func (c *AWSConnector) discoverSubnets(ctx context.Context, region string) ([]discovery.Resource, error) {
 	ec2Client := c.clients["ec2"].(*ec2.Client)
 	
-	result, err := ec2Client.DescribeSubnetsInput{})
+	// FIXED: Corrected the function call syntax
+	result, err := ec2Client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe subnets: %w", err)
 	}

@@ -3,7 +3,6 @@ module github.com/BigChiefRick/chimera
 go 1.21
 
 require (
-
 	// Google Cloud SDK
 	cloud.google.com/go/compute v1.23.3
 

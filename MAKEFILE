@@ -55,12 +55,22 @@ integration-test: ## Run integration tests
 # Setup
 setup: ## Setup development environment
 	@echo "Setting up Chimera development environment..."
-	go mod init github.com/BigChiefRick/chimera || true
+	@if [ -f ".chimera-codespaces" ]; then \
+		echo "📦 Detected Codespaces environment"; \
+		go mod init github.com/BigChiefRick/chimera || true; \
+	else \
+		go mod init github.com/BigChiefRick/chimera || true; \
+	fi
 	$(MAKE) deps
 	@echo "Installing development tools..."
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	@echo "Running integration test..."
-	$(MAKE) integration-test
+	@if [ -f ".chimera-codespaces" ]; then \
+		echo "🚀 Codespaces environment ready!"; \
+		echo "Run: ./scripts/codespaces.sh start"; \
+	else \
+		echo "Running integration test..."; \
+		$(MAKE) integration-test; \
+	fi
 
 # Steampipe operations
 steampipe-start: ## Start Steampipe service
@@ -93,4 +103,39 @@ terraformer-test-gcp: ## Test Terraformer with GCP
 
 # Discovery tests
 test-discovery-aws: steampipe-start ## Test discovery on AWS
-	steampipe query "select name, vpc_id, region from aws_vpc"
+	steampipe query "select name, vpc_id, region from aws_vpc limit 5"
+	
+test-discovery-azure: steampipe-start ## Test discovery on Azure
+	steampipe query "select name, location from azure_resource_group limit 5"
+
+test-discovery-gcp: steampipe-start ## Test discovery on GCP  
+	steampipe query "select name, project_id from gcp_project limit 5"
+
+test-discovery-all: steampipe-start ## Test discovery on all clouds
+	@echo "Testing multi-cloud discovery..."
+	steampipe query "select 'AWS' as provider, count(*) as vpcs from aws_vpc union all select 'Azure' as provider, count(*) from azure_resource_group union all select 'GCP' as provider, count(*) from gcp_project"
+
+# Codespaces helpers
+codespaces-start: ## Start Codespaces development environment
+	@if [ -f ".chimera-codespaces" ]; then \
+		./scripts/codespaces.sh start; \
+	else \
+		echo "❌ Not in Codespaces environment"; \
+		echo "Run this in GitHub Codespaces or use: make steampipe-start"; \
+	fi
+
+codespaces-demo: ## Run Codespaces demo
+	@if [ -f ".chimera-codespaces" ]; then \
+		./scripts/codespaces.sh demo; \
+	else \
+		echo "❌ Not in Codespaces environment"; \
+		$(MAKE) test; \
+	fi
+
+# Clean
+clean: ## Clean build artifacts
+	rm -rf $(BUILD_DIR)
+	rm -rf test-output/
+	rm -f coverage.out coverage.html
+	go clean -cache
+	go clean -modcache

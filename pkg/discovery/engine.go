@@ -3,8 +3,6 @@ package discovery
 import (
 	"context"
 	"fmt"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"

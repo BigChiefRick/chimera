@@ -33,7 +33,7 @@ print_error() {
 }
 
 # Check if we're in the right directory
-if [ ! -f "README.md" ] || ! grep -q "BigChiefRick/chimera" README.md; then
+if [ ! -f ".chimera-root" ]; then
     print_error "Please run this script from the root of the Chimera repository"
     exit 1
 fi

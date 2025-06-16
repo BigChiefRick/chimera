@@ -1,178 +1,182 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"github.com/sirupsen/logrus"
+
+	"github.com/BigChiefRick/chimera/cmd/discover"
+	"github.com/BigChiefRick/chimera/cmd/generate"
+	"github.com/BigChiefRick/chimera/pkg/config"
 )
 
-var version = "v0.1.0-dev"
+var (
+	cfgFile    string
+	verbose    bool
+	debug      bool
+	outputJSON bool
+	version    = "v0.1.0-alpha"
+)
+
+// rootCmd represents the base command when called without any subcommands
+var rootCmd = &cobra.Command{
+	Use:   "chimera",
+	Short: "Multi-cloud infrastructure discovery and IaC generation tool",
+	Long: `Chimera connects to multiple cloud and virtualization environments,
+discovers infrastructure resources, and generates Infrastructure as Code templates.
+
+Supported Platforms:
+  • Amazon Web Services (AWS)
+  • Microsoft Azure  
+  • Google Cloud Platform (GCP)
+  • VMware vSphere
+  • KVM/libvirt
+
+Supported IaC Outputs:
+  • Terraform (.tf)
+  • Pulumi
+  • AWS CloudFormation
+  • Azure ARM Templates`,
+	Version: version,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		setupLogging()
+	},
+}
+
+// Execute adds all child commands to the root command and sets flags appropriately.
+func Execute() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
+		logrus.Error(err)
+		os.Exit(1)
+	}
+}
 
 func main() {
-	if len(os.Args) > 1 {
-		switch strings.ToLower(os.Args[1]) {
-		case "--help", "-h", "help":
-			showHelp()
-			return
-		case "--version", "-v", "version":
-			showVersion()
-			return
-		case "discover":
-			handleDiscover()
-			return
-		case "generate":
-			handleGenerate()
-			return
-		case "config":
-			handleConfig()
-			return
+	Execute()
+}
+
+func init() {
+	cobra.OnInitialize(initConfig)
+
+	// Global flags
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.chimera.yaml)")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "debug output")
+	rootCmd.PersistentFlags().BoolVar(&outputJSON, "json", false, "output in JSON format")
+
+	// Bind flags to viper
+	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
+	viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
+	viper.BindPFlag("json", rootCmd.PersistentFlags().Lookup("json"))
+
+	// Add subcommands
+	rootCmd.AddCommand(discover.NewDiscoverCommand())
+	rootCmd.AddCommand(generate.NewGenerateCommand())
+	rootCmd.AddCommand(newVersionCommand())
+	rootCmd.AddCommand(newConfigCommand())
+}
+
+// initConfig reads in config file and ENV variables if set.
+func initConfig() {
+	if cfgFile != "" {
+		// Use config file from the flag.
+		viper.SetConfigFile(cfgFile)
+	} else {
+		// Find home directory.
+		home, err := os.UserHomeDir()
+		cobra.CheckErr(err)
+
+		// Search config in home directory with name ".chimera" (without extension).
+		viper.AddConfigPath(home)
+		viper.AddConfigPath(".")
+		viper.SetConfigType("yaml")
+		viper.SetConfigName(".chimera")
+	}
+
+	viper.AutomaticEnv() // read in environment variables that match
+
+	// If a config file is found, read it in.
+	if err := viper.ReadInConfig(); err == nil {
+		if viper.GetBool("verbose") {
+			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 		}
 	}
-
-	// Default behavior
-	fmt.Printf("Chimera %s - Multi-cloud infrastructure discovery and IaC generation tool\n", version)
-	fmt.Println("Use --help for usage information")
 }
 
-func showHelp() {
-	fmt.Printf(`Chimera %s - Multi-cloud infrastructure discovery and IaC generation tool
-
-USAGE:
-    chimera [COMMAND] [OPTIONS]
-
-COMMANDS:
-    discover    Discover infrastructure resources from cloud providers
-    generate    Generate Infrastructure as Code from discovered resources  
-    config      Manage configuration settings
-    version     Show version information
-    help        Show this help message
-
-GLOBAL OPTIONS:
-    --verbose, -v     Enable verbose output
-    --debug           Enable debug output
-    --config PATH     Configuration file path
-    --help, -h        Show help
-    --version         Show version
-
-EXAMPLES:
-    # Discover AWS resources in us-east-1
-    chimera discover --provider aws --region us-east-1
-
-    # Generate Terraform from discovered resources
-    chimera generate --format terraform --output ./infrastructure
-
-    # Show configuration
-    chimera config show
-
-For more information about a specific command, use:
-    chimera [COMMAND] --help
-
-Documentation: https://github.com/BigChiefRick/chimera
-`, version)
-}
-
-func showVersion() {
-	fmt.Printf("Chimera %s\n", version)
-	fmt.Println("Built with Go")
-	fmt.Println("https://github.com/BigChiefRick/chimera")
-}
-
-func handleDiscover() {
-	if len(os.Args) > 2 && (os.Args[2] == "--help" || os.Args[2] == "-h") {
-		fmt.Printf(`chimera discover - Discover infrastructure resources
-
-USAGE:
-    chimera discover [OPTIONS]
-
-OPTIONS:
-    --provider PROVIDERS    Cloud providers (aws,azure,gcp,vmware,kvm)
-    --region REGIONS       Regions to scan
-    --resource-type TYPES  Resource types to discover
-    --output PATH          Output file path
-    --format FORMAT        Output format (json,yaml,table)
-    --steampipe           Use Steampipe for discovery
-    --filter FILTERS      Apply filters
-    --help, -h            Show this help
-
-EXAMPLES:
-    chimera discover --provider aws --region us-east-1
-    chimera discover --provider aws,azure --output resources.json
-    chimera discover --steampipe --provider aws,gcp --format yaml
-`)
-		return
+func setupLogging() {
+	if debug {
+		logrus.SetLevel(logrus.DebugLevel)
+	} else if verbose {
+		logrus.SetLevel(logrus.InfoLevel)
+	} else {
+		logrus.SetLevel(logrus.WarnLevel)
 	}
 
-	fmt.Println("🔍 Discovery command (implementation in progress)")
-	fmt.Println("This command will discover infrastructure resources from cloud providers")
-	fmt.Println("Use --help for detailed usage information")
+	if outputJSON {
+		logrus.SetFormatter(&logrus.JSONFormatter{})
+	} else {
+		logrus.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp: true,
+		})
+	}
 }
 
-func handleGenerate() {
-	if len(os.Args) > 2 && (os.Args[2] == "--help" || os.Args[2] == "-h") {
-		fmt.Printf(`chimera generate - Generate Infrastructure as Code
-
-USAGE:
-    chimera generate [OPTIONS]
-
-OPTIONS:
-    --input PATH          Input file with discovered resources
-    --format FORMAT       IaC format (terraform,pulumi,cloudformation)
-    --output PATH         Output directory
-    --organize-by TYPE    Organization method (provider,service,region)
-    --help, -h           Show this help
-
-EXAMPLES:
-    chimera generate --input resources.json --format terraform
-    chimera generate --format pulumi --output ./infrastructure
-`)
-		return
+func newVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the version number of Chimera",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("Chimera %s\n", version)
+			fmt.Println("Built with Go")
+			fmt.Println("https://github.com/BigChiefRick/chimera")
+		},
 	}
-
-	fmt.Println("⚙️  Generation command (implementation in progress)")
-	fmt.Println("This command will generate Infrastructure as Code from discovered resources")
-	fmt.Println("Use --help for detailed usage information")
 }
 
-func handleConfig() {
-	if len(os.Args) > 2 {
-		switch os.Args[2] {
-		case "--help", "-h":
-			fmt.Printf(`chimera config - Manage configuration
-
-USAGE:
-    chimera config [SUBCOMMAND]
-
-SUBCOMMANDS:
-    init        Initialize default configuration
-    show        Show current configuration
-    validate    Validate configuration
-    help        Show this help
-
-EXAMPLES:
-    chimera config init
-    chimera config show
-    chimera config validate
-`)
-			return
-		case "show":
-			fmt.Println("📋 Current configuration (default values):")
-			fmt.Println("Config file: ~/.chimera.yaml (not found, using defaults)")
-			fmt.Println("Debug: false")
-			fmt.Println("Verbose: false")
-			fmt.Println("Output format: json")
-			fmt.Println("Use 'chimera config init' to create a configuration file")
-			return
-		case "init":
-			fmt.Println("📝 Configuration initialization (implementation in progress)")
-			fmt.Println("This will create a default configuration file at ~/.chimera.yaml")
-			return
-		case "validate":
-			fmt.Println("✅ Configuration validation (using defaults)")
-			fmt.Println("No configuration file found, defaults are valid")
-			return
-		}
+func newConfigCommand() *cobra.Command {
+	configCmd := &cobra.Command{
+		Use:   "config",
+		Short: "Manage Chimera configuration",
+		Long:  "Configure Chimera with cloud provider credentials and settings",
 	}
 
-	fmt.Println("⚙️  Configuration management")
-	fmt.Println("Use 'chimera config --help' for available commands")
+	configCmd.AddCommand(&cobra.Command{
+		Use:   "init",
+		Short: "Initialize Chimera configuration",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := config.InitializeConfig(); err != nil {
+				logrus.Fatalf("Failed to initialize config: %v", err)
+			}
+			fmt.Println("Configuration initialized successfully!")
+		},
+	})
+
+	configCmd.AddCommand(&cobra.Command{
+		Use:   "validate",
+		Short: "Validate Chimera configuration",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := config.ValidateConfig(); err != nil {
+				logrus.Fatalf("Configuration validation failed: %v", err)
+			}
+			fmt.Println("Configuration is valid!")
+		},
+	})
+
+	configCmd.AddCommand(&cobra.Command{
+		Use:   "show",
+		Short: "Show current configuration",
+		Run: func(cmd *cobra.Command, args []string) {
+			config.ShowConfig()
+		},
+	})
+
+	return configCmd
 }

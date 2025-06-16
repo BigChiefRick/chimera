@@ -1,0 +1,96 @@
+# Chimera Makefile
+.PHONY: help build test clean install deps lint fmt vet integration-test docker
+
+# Variables
+BINARY_NAME=chimera
+MAIN_PATH=./cmd
+BUILD_DIR=./bin
+VERSION=$(shell git describe --tags --always --dirty)
+LDFLAGS=-ldflags "-X main.version=$(VERSION)"
+
+# Default target
+help: ## Show this help message
+	@echo 'Usage: make <target>'
+	@echo ''
+	@echo 'Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+# Dependencies
+deps: ## Download dependencies
+	go mod download
+	go mod tidy
+
+# Build
+build: deps ## Build the binary
+	mkdir -p $(BUILD_DIR)
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
+
+# Install
+install: build ## Install the binary
+	go install $(LDFLAGS) $(MAIN_PATH)
+
+# Development
+fmt: ## Format code
+	go fmt ./...
+
+vet: ## Run go vet
+	go vet ./...
+
+lint: ## Run golangci-lint
+	golangci-lint run
+
+# Testing
+test: ## Run unit tests
+	go test -v ./...
+
+test-coverage: ## Run tests with coverage
+	go test -v -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+
+integration-test: ## Run integration tests
+	@echo "Running Phase 1 integration tests..."
+	@chmod +x scripts/test-integration.sh
+	@scripts/test-integration.sh
+
+# Setup
+setup: ## Setup development environment
+	@echo "Setting up Chimera development environment..."
+	go mod init github.com/BigChiefRick/chimera || true
+	$(MAKE) deps
+	@echo "Installing development tools..."
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@echo "Running integration test..."
+	$(MAKE) integration-test
+
+# Steampipe operations
+steampipe-start: ## Start Steampipe service
+	steampipe service start
+
+steampipe-stop: ## Stop Steampipe service
+	steampipe service stop
+
+steampipe-install-plugins: ## Install common Steampipe plugins
+	steampipe plugin install aws
+	steampipe plugin install azure
+	steampipe plugin install gcp
+	steampipe plugin install kubernetes
+
+# Terraformer operations
+terraformer-test-aws: ## Test Terraformer with AWS
+	@mkdir -p test-output/aws
+	@cd test-output/aws && terraform init
+	terraformer import aws --resources=vpc --regions=us-east-1 --path-output=test-output/aws
+
+terraformer-test-azure: ## Test Terraformer with Azure
+	@mkdir -p test-output/azure
+	@cd test-output/azure && terraform init
+	terraformer import azure --resources=virtual_network --path-output=test-output/azure
+
+terraformer-test-gcp: ## Test Terraformer with GCP
+	@mkdir -p test-output/gcp
+	@cd test-output/gcp && terraform init
+	terraformer import google --resources=networks --path-output=test-output/gcp
+
+# Discovery tests
+test-discovery-aws: steampipe-start ## Test discovery on AWS
+	steampipe query "select name, vpc_i

@@ -1,4 +1,4 @@
-# chimera# Chimera
+# Chimera
 
 A multi-cloud infrastructure discovery and Infrastructure as Code (IaC) generation tool that connects to multiple cloud and virtualization environments to automatically generate IaC templates from existing infrastructure.
 
@@ -49,7 +49,7 @@ Chimera connects to your existing cloud and virtualization environments, discove
 
 ```bash
 # Clone the repository
-git clone https://github.com/[your-username]/chimera.git
+git clone https://github.com/BigChiefRick/chimera.git
 cd chimera
 
 # Install dependencies (coming soon)
@@ -84,11 +84,12 @@ Chimera supports multiple credential management approaches:
 
 🚧 **Early Development** - This project is in active development. APIs and functionality are subject to change.
 
-### Current Phase
-- [ ] Core architecture design
-- [ ] AWS connector implementation
-- [ ] Basic Terraform output generation
-- [ ] Credential management system
+### Current Phase - Phase 1: Foundation
+- [x] Research and identify core open-source components
+- [ ] Terraformer integration and analysis
+- [ ] Steampipe integration for unified discovery
+- [ ] Core architecture design based on learnings
+- [ ] Basic multi-cloud connector framework
 
 ### Roadmap
 - **Phase 1**: AWS + Terraform support
@@ -105,7 +106,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 
 ```bash
 # Fork and clone the repository
-git clone https://github.com/[your-username]/chimera.git
+git clone https://github.com/BigChiefRick/chimera.git
 cd chimera
 
 # Create a feature branch
@@ -128,9 +129,15 @@ Please report security vulnerabilities to [security@yourproject.com] or through 
 
 ## Acknowledgments
 
+## Acknowledgments
+
 This project builds upon the excellent work of the open-source community, including:
-- [Tools and projects to be listed as we integrate them]
+- **[Terraformer](https://github.com/GoogleCloudPlatform/terraformer)** - CLI tool for reverse engineering infrastructure to Terraform
+- **[Steampipe](https://steampipe.io)** - Universal SQL interface for cloud APIs and services  
+- **[Former2](https://github.com/iann0036/former2)** - AWS infrastructure to CloudFormation/Terraform converter
+- **[Prowler](https://github.com/prowler-cloud/prowler)** - Multi-cloud security assessment and resource discovery
+- **[Azure Export for Terraform](https://github.com/Azure/aztfexport)** - Microsoft's official Azure to Terraform tool
 
 ---
 
-**Note**: Chimera is designed to discover and codify existing infrastructure. Always review generated IaC templates before applying them to production environments.
+**Note**: Chimera is designed to discover and codify existing infrastructure. Always review generated IaC templates before applying them to production environment

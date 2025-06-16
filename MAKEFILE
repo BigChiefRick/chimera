@@ -93,4 +93,4 @@ terraformer-test-gcp: ## Test Terraformer with GCP
 
 # Discovery tests
 test-discovery-aws: steampipe-start ## Test discovery on AWS
-	steampipe query "select name, vpc_i
+	steampipe query "select name, vpc_id, region from aws_vpc"

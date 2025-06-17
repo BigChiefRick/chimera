@@ -28,6 +28,18 @@ const (
 	CDKCSharp        IaCFormat = "cdk-csharp"
 )
 
+// OrganizationPattern defines how to organize generated files
+type OrganizationPattern string
+
+const (
+	OrganizeByProvider     OrganizationPattern = "provider"
+	OrganizeByService      OrganizationPattern = "service"
+	OrganizeByRegion       OrganizationPattern = "region"
+	OrganizeByResourceType OrganizationPattern = "resource_type"
+	OrganizeFlat           OrganizationPattern = "flat"
+	OrganizeByModule       OrganizationPattern = "module"
+)
+
 // ModuleStructure defines how to structure generated modules
 type ModuleStructure string
 
@@ -48,10 +60,11 @@ type GenerationOptions struct {
 	Format IaCFormat `json:"format"`
 	
 	// Output configuration
-	OutputPath       string `json:"output_path"`
-	OrganizeByType   bool   `json:"organize_by_type"`
-	OrganizeByRegion bool   `json:"organize_by_region"`
-	SingleFile       bool   `json:"single_file"`
+	OutputPath       string              `json:"output_path"`
+	Organization     OrganizationPattern `json:"organization"`
+	OrganizeByType   bool                `json:"organize_by_type"`
+	OrganizeByRegion bool                `json:"organize_by_region"`
+	SingleFile       bool                `json:"single_file"`
 	
 	// Generation settings
 	IncludeState     bool              `json:"include_state"`
@@ -94,6 +107,7 @@ type GeneratedFile struct {
 	Size         int64     `json:"size"`
 	ResourceCount int      `json:"resource_count"`
 	Checksum     string    `json:"checksum,omitempty"`
+	File         string    `json:"file,omitempty"` // For error tracking
 }
 
 // FileType represents the type of generated file
@@ -121,6 +135,7 @@ type GenerationMetadata struct {
 	FileCount      int                            `json:"file_count"`
 	LinesGenerated int                            `json:"lines_generated"`
 	Format         IaCFormat                      `json:"format"`
+	Organization   OrganizationPattern            `json:"organization"`
 	ProviderStats  map[discovery.CloudProvider]int `json:"provider_stats"`
 	ErrorCount     int                            `json:"error_count"`
 	WarningCount   int                            `json:"warning_count"`
@@ -128,14 +143,22 @@ type GenerationMetadata struct {
 
 // GenerationError represents an error during generation
 type GenerationError struct {
-	ResourceID   string                 `json:"resource_id"`
-	ResourceType string                 `json:"resource_type"`
-	Provider     discovery.CloudProvider `json:"provider"`
+	ResourceID   string                 `json:"resource_id,omitempty"`
+	ResourceType string                 `json:"resource_type,omitempty"`
+	Provider     discovery.CloudProvider `json:"provider,omitempty"`
 	Message      string                 `json:"message"`
 	Error        error                  `json:"-"`
 	Severity     string                 `json:"severity"`
+	File         string                 `json:"file,omitempty"`
 	Timestamp    time.Time              `json:"timestamp"`
 }
+
+// Error severity constants
+const (
+	ErrorSeverityLow    = "low"
+	ErrorSeverityMedium = "medium"
+	ErrorSeverityHigh   = "high"
+)
 
 // GenerationWarning represents a warning during generation
 type GenerationWarning struct {
@@ -168,6 +191,29 @@ type MappedResource struct {
 	Metadata         map[string]interface{}     `json:"metadata"`          // Additional metadata
 }
 
+// TerraformResource represents a Terraform resource for generation
+type TerraformResource struct {
+	Type           string                     `json:"type"`              // e.g., "aws_vpc"
+	Name           string                     `json:"name"`              // Terraform resource name
+	Configuration  map[string]interface{}     `json:"configuration"`     // Resource configuration
+	Dependencies   []string                   `json:"dependencies"`      // Resource dependencies
+	Variables      map[string]Variable        `json:"variables"`         // Associated variables
+	Outputs        map[string]Output          `json:"outputs"`           // Associated outputs
+	SourceInfo     SourceInfo                 `json:"source_info"`       // Original resource info
+	Provider       discovery.CloudProvider    `json:"provider"`          // Cloud provider
+}
+
+// SourceInfo contains information about the original discovered resource
+type SourceInfo struct {
+	OriginalID       string                 `json:"original_id"`
+	OriginalType     string                 `json:"original_type"`
+	OriginalProvider discovery.CloudProvider `json:"original_provider"`
+	OriginalRegion   string                 `json:"original_region"`
+	DiscoveredAt     time.Time              `json:"discovered_at"`
+	Metadata         map[string]interface{} `json:"metadata"`
+	Tags             map[string]string      `json:"tags"`
+}
+
 // Variable represents a Terraform variable
 type Variable struct {
 	Name        string      `json:"name"`
@@ -194,7 +240,29 @@ type Output struct {
 	Type        string      `json:"type,omitempty"`
 }
 
-// Generator defines the interface for IaC generators
+// ProviderConfig represents provider configuration
+type ProviderConfig struct {
+	Name     string                 `json:"name"`     // e.g., "aws", "azurerm", "google"
+	Source   string                 `json:"source"`   // e.g., "hashicorp/aws"
+	Version  string                 `json:"version"`  // e.g., "~> 5.0"
+	Config   map[string]interface{} `json:"config"`   // Provider-specific config
+	Alias    string                 `json:"alias,omitempty"`
+	Required bool                   `json:"required"`
+}
+
+// ModuleConfig represents a Terraform module configuration
+type ModuleConfig struct {
+	Name         string                 `json:"name"`
+	Source       string                 `json:"source"`
+	Version      string                 `json:"version,omitempty"`
+	Providers    []ProviderConfig       `json:"providers"`
+	Variables    map[string]Variable    `json:"variables"`
+	Outputs      map[string]Output      `json:"outputs"`
+	Resources    []TerraformResource    `json:"resources"`
+	Dependencies []string               `json:"dependencies"`
+}
+
+// Generator defines the interface for IaC generators (generic)
 type Generator interface {
 	// Generate generates IaC files from mapped resources
 	Generate(resources []MappedResource, opts GenerationOptions) ([]GeneratedFile, error)
@@ -206,6 +274,30 @@ type Generator interface {
 	GetSupportedFormats() []IaCFormat
 }
 
+// TerraformGenerator defines the interface for Terraform-specific generators
+type TerraformGenerator interface {
+	// Generate generates Terraform files from mapped resources
+	Generate(resources []MappedResource, opts GenerationOptions) ([]GeneratedFile, error)
+	
+	// GenerateResource generates HCL for a single resource
+	GenerateResource(resource TerraformResource) (string, error)
+	
+	// GenerateProvider generates provider configuration
+	GenerateProvider(config ProviderConfig) (string, error)
+	
+	// GenerateVersions generates versions.tf content
+	GenerateVersions(providers []ProviderConfig) (string, error)
+	
+	// GenerateVariables generates variables.tf content
+	GenerateVariables(variables map[string]Variable) (string, error)
+	
+	// GenerateOutputs generates outputs.tf content
+	GenerateOutputs(outputs map[string]Output) (string, error)
+	
+	// ValidateOutput validates generated Terraform
+	ValidateOutput(files []GeneratedFile) error
+}
+
 // ResourceMapper defines the interface for mapping discovered resources to IaC resources
 type ResourceMapper interface {
 	// MapResources maps discovered resources to IaC representations
@@ -214,8 +306,14 @@ type ResourceMapper interface {
 	// GetSupportedResourceTypes returns supported resource types for this mapper
 	GetSupportedResourceTypes() []string
 	
+	// GetSupportedTypes returns supported resource types (alias for compatibility)
+	GetSupportedTypes() []string
+	
 	// GetProvider returns the cloud provider this mapper handles
 	GetProvider() discovery.CloudProvider
+	
+	// Provider returns the cloud provider this mapper handles (alias)
+	Provider() discovery.CloudProvider
 }
 
 // TemplateEngine defines the interface for template processing
@@ -236,7 +334,7 @@ type TemplateEngine interface {
 // FileOrganizer defines the interface for organizing generated files
 type FileOrganizer interface {
 	// OrganizeFiles organizes files based on the specified pattern
-	OrganizeFiles(files []GeneratedFile, pattern ModuleStructure) ([]GeneratedFile, error)
+	OrganizeFiles(resources []TerraformResource, pattern OrganizationPattern) (map[string][]TerraformResource, error)
 	
 	// GroupByProvider groups files by cloud provider
 	GroupByProvider(files []GeneratedFile) map[discovery.CloudProvider][]GeneratedFile
@@ -318,7 +416,7 @@ type GenerationEngine interface {
 	RegisterMapper(provider discovery.CloudProvider, mapper ResourceMapper)
 	
 	// RegisterGenerator registers a generator for an IaC format
-	RegisterGenerator(format IaCFormat, generator Generator)
+	RegisterGenerator(format IaCFormat, generator TerraformGenerator)
 	
 	// ValidateOptions validates generation options
 	ValidateOptions(opts GenerationOptions) error
@@ -328,20 +426,19 @@ type GenerationEngine interface {
 	
 	// GetFormatCapabilities returns capabilities for a specific format
 	GetFormatCapabilities(format IaCFormat) FormatCapabilities
-	
-	// Preview generates a preview of what would be generated
-	Preview(ctx context.Context, opts GenerationOptions) (*PreviewResult, error)
 }
 
 // FormatCapabilities represents capabilities of an IaC format
 type FormatCapabilities struct {
-	Format            IaCFormat `json:"format"`
-	SupportsModules   bool      `json:"supports_modules"`
-	SupportsVariables bool      `json:"supports_variables"`
-	SupportsOutputs   bool      `json:"supports_outputs"`
-	SupportsState     bool      `json:"supports_state"`
-	SupportsImports   bool      `json:"supports_imports"`
-	SupportedProviders []discovery.CloudProvider `json:"supported_providers"`
+	Format               IaCFormat                          `json:"format"`
+	SupportsModules      bool                               `json:"supports_modules"`
+	SupportsVariables    bool                               `json:"supports_variables"`
+	SupportsOutputs      bool                               `json:"supports_outputs"`
+	SupportsState        bool                               `json:"supports_state"`
+	SupportsImports      bool                               `json:"supports_imports"`
+	SupportedProviders   []discovery.CloudProvider          `json:"supported_providers"`
+	SupportedResources   map[string][]string                `json:"supported_resources"`
+	OrganizationPatterns []OrganizationPattern              `json:"organization_patterns"`
 }
 
 // PreviewResult contains the results of a generation preview

@@ -1,13 +1,21 @@
 # Chimera
 
-**Multi-Cloud Infrastructure Discovery and IaC Generation Tool**
+<div align="center">
+  <img src="docs/images/chimera-logo.png" alt="Chimera Logo" width="300"/>
+  
+  **Multi-Cloud Infrastructure Discovery and IaC Generation Tool**
+  
+  A production-ready tool that connects to multiple cloud environments, discovers infrastructure resources, and generates Infrastructure as Code templates from existing infrastructure.
+</div>
 
-A production-ready tool that connects to multiple cloud environments, discovers infrastructure resources, and generates Infrastructure as Code templates from existing infrastructure.
+<div align="center">
 
 [![Phase 2 Complete](https://img.shields.io/badge/Phase%202-Complete-brightgreen.svg)](https://github.com/BigChiefRick/chimera)
 [![Multi-Cloud Discovery](https://img.shields.io/badge/AWS%20%7C%20Azure%20%7C%20GCP-Working-blue.svg)](https://github.com/BigChiefRick/chimera)
 [![Go 1.21+](https://img.shields.io/badge/Go-1.21+-00ADD8.svg)](https://golang.org/dl/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
 
 ## 🎯 What Chimera Does
 
@@ -58,51 +66,9 @@ A production-ready tool that connects to multiple cloud environments, discovers 
 ✅ Found 3 GCP resources
 
 🎉 Multi-Cloud Discovery Complete!
-Total resources found: 13
-Discovery duration: 3.2s
-
-📊 Resource Summary by Provider:
-   AWS: 6 resources
-   AZURE: 4 resources
-   GCP: 3 resources
-
-PROVIDER   NAME                TYPE                    REGION          
-AWS        Hub-VPC            aws_vpc                 us-east-1       
-AZURE      Production-RG      azure_resource_group    eastus          
-GCP        default           gcp_compute_network     us-central1     
-
-Total: 13 resources
 ```
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────┐    ┌──────────────────────┐    ┌─────────────────────┐
-│   Cloud Providers   │    │       Chimera        │    │   IaC Templates     │
-│                     │───▶│   Discovery &       │───▶│    Generated        │
-│ AWS ✅ Azure ✅    │    │   Generation Engine  │    │                     |
-│ GCP ✅ VMware ⏳   │    │                      │    │ Terraform ⏳        |
-│ KVM ⏳             │    │                      │    │ Pulumi ⏳           │
-└─────────────────────┘    └───────────────────── ┘    └─────────────────────┘
-```
-
-### Core Components:
-
-- **Discovery Engine** (`pkg/discovery/`) - Multi-provider resource discovery orchestration
-- **AWS Provider** (`pkg/discovery/providers/aws.go`) - Production AWS connector
-- **Azure Provider** (`pkg/discovery/providers/azure.go`) - Complete Azure ARM integration
-- **GCP Provider** (`pkg/discovery/providers/gcp.go`) - Full Google Cloud support
-- **Generation Framework** (`pkg/generation/`) - IaC template generation (Phase 3)
-- **CLI Interface** (`cmd/`) - Professional command-line interface
-- **Configuration** (`pkg/config/`) - YAML-based configuration management
 
 ## 🚀 Quick Start
-
-### Prerequisites
-
-- **Go 1.21+** - [Download here](https://golang.org/dl/)
-- **Cloud CLIs configured** - AWS CLI, Azure CLI, Google Cloud CLI
-- **Git** - For cloning the repository
 
 ### 1. Clone and Build
 
@@ -315,7 +281,9 @@ chimera/
 
 ## 🔧 Configuration
 
-Chimera uses YAML configuration files. Create `~/.chimera.yaml`:
+Chimera uses YAML configuration files.
+
+Create `~/.chimera.yaml`:
 
 ```yaml
 # Global settings

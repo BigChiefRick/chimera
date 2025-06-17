@@ -1,8 +1,136 @@
-# Phase 3 Enhanced Makefile Targets
-# Add these to your existing Makefile
+# Chimera - Multi-Cloud Infrastructure Discovery and IaC Generation Tool
+# Complete Makefile with Phase 3 capabilities
 
-# Phase 3 Generation Tests
-phase3-test: build ## Verify Phase 3 completion
+.PHONY: help build test clean fmt vet deps version setup integration-test
+.PHONY: phase3-test e2e-test test-generation-options perf-test-generation
+.PHONY: aws-discover-and-generate validate-terraform clean-generated
+.PHONY: phase3-complete demo-generation aws-test-creds
+
+# Default target
+.DEFAULT_GOAL := help
+
+# Binary name
+BINARY_NAME=chimera
+BIN_DIR=bin
+PKG=./cmd
+
+# Go parameters
+GOCMD=go
+GOBUILD=$(GOCMD) build
+GOCLEAN=$(GOCMD) clean
+GOTEST=$(GOCMD) test
+GOGET=$(GOCMD) get
+GOMOD=$(GOCMD) mod
+GOFMT=gofmt
+
+# Build information
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIME ?= $(shell date -u '+%Y-%m-%d_%H:%M:%S')
+
+# LDFLAGS for build info
+LDFLAGS=-ldflags "-X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildTime=$(BUILD_TIME)"
+
+## help: Display this help message
+help:
+	@echo "🔮 Chimera - Multi-Cloud Infrastructure Discovery Tool"
+	@echo "====================================================="
+	@echo ""
+	@echo "Available commands:"
+	@echo ""
+	@awk 'BEGIN {FS = ":.*##"; printf "\033[36m\033[0m"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+	@echo ""
+	@echo "🚀 Quick start:"
+	@echo "  make setup    - Install dependencies and tools"
+	@echo "  make build    - Build the chimera binary"
+	@echo "  make test     - Run all tests"
+	@echo "  make help     - Show this help message"
+
+##@ Basic Commands
+
+## build: Build the chimera binary
+build:
+	@echo "🔨 Building Chimera..."
+	@mkdir -p $(BIN_DIR)
+	@$(GOBUILD) $(LDFLAGS) -o $(BIN_DIR)/$(BINARY_NAME) $(PKG)
+	@echo "✅ Build complete: $(BIN_DIR)/$(BINARY_NAME)"
+
+## clean: Clean build artifacts
+clean:
+	@echo "🧹 Cleaning build artifacts..."
+	@$(GOCLEAN)
+	@rm -rf $(BIN_DIR)
+	@echo "✅ Clean complete"
+
+## test: Run all tests
+test:
+	@echo "🧪 Running tests..."
+	@$(GOTEST) -v ./...
+	@echo "✅ Tests complete"
+
+## fmt: Format Go code
+fmt:
+	@echo "🎨 Formatting code..."
+	@$(GOFMT) -s -w .
+	@echo "✅ Formatting complete"
+
+## vet: Run go vet
+vet:
+	@echo "🔍 Running go vet..."
+	@$(GOCMD) vet ./...
+	@echo "✅ Vet complete"
+
+## deps: Download and verify dependencies
+deps:
+	@echo "📦 Managing dependencies..."
+	@$(GOMOD) download
+	@$(GOMOD) verify
+	@$(GOMOD) tidy
+	@echo "✅ Dependencies updated"
+
+## version: Show version information
+version: build
+	@echo "📋 Version information:"
+	@./$(BIN_DIR)/$(BINARY_NAME) version
+
+##@ Development
+
+## setup: Setup development environment
+setup: deps
+	@echo "🛠️  Setting up development environment..."
+	@echo "✅ Setup complete"
+
+## integration-test: Run integration tests
+integration-test: build
+	@echo "🔗 Running integration tests..."
+	@if [ -f "scripts/test-integration.sh" ]; then \
+		chmod +x scripts/test-integration.sh && ./scripts/test-integration.sh; \
+	else \
+		echo "⚠️  Integration test script not found"; \
+	fi
+
+##@ AWS Testing
+
+## aws-test-creds: Test AWS credentials
+aws-test-creds:
+	@echo "🔑 Testing AWS credentials..."
+	@if command -v aws >/dev/null 2>&1; then \
+		if aws sts get-caller-identity >/dev/null 2>&1; then \
+			echo "✅ AWS credentials configured"; \
+			aws sts get-caller-identity; \
+		else \
+			echo "❌ AWS credentials not configured or invalid"; \
+			echo "Run: aws configure"; \
+		fi; \
+	else \
+		echo "❌ AWS CLI not installed"; \
+		echo "Install: curl 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o 'awscliv2.zip' && unzip awscliv2.zip && sudo ./aws/install"; \
+	fi
+
+##@ Phase 3 Generation Tests
+
+## phase3-test: Verify Phase 3 completion
+phase3-test: build
 	@echo "🎯 Testing Phase 3 Completion..."
 	@echo "================================"
 	
@@ -25,8 +153,8 @@ phase3-test: build ## Verify Phase 3 completion
 	@echo ""
 	@echo "🎉 Phase 3 Complete! All generation components functional."
 
-# End-to-end workflow test
-e2e-test: build aws-test-creds ## Run complete end-to-end test
+## e2e-test: Run complete end-to-end test
+e2e-test: build aws-test-creds
 	@echo "🔄 End-to-End Workflow Test"
 	@echo "==========================="
 	
@@ -52,8 +180,8 @@ e2e-test: build aws-test-creds ## Run complete end-to-end test
 	@rm -rf e2e-resources.json e2e-terraform/
 	@echo "✅ End-to-end test completed"
 
-# Test generation with real AWS data
-aws-discover-and-generate: build aws-test-creds ## Discover AWS and generate Terraform
+## aws-discover-and-generate: Discover AWS and generate Terraform
+aws-discover-and-generate: build aws-test-creds
 	@echo "🔍 AWS Discovery → Terraform Generation"
 	@echo "======================================"
 	
@@ -80,8 +208,8 @@ aws-discover-and-generate: build aws-test-creds ## Discover AWS and generate Ter
 		echo "❌ Discovery failed - check AWS credentials"; \
 	fi
 
-# Test different generation options
-test-generation-options: build ## Test various generation options
+## test-generation-options: Test various generation options
+test-generation-options: build
 	@echo "🧪 Testing Generation Options"
 	@echo "============================="
 	
@@ -107,8 +235,8 @@ test-generation-options: build ## Test various generation options
 	@rm -rf test-resources.json test-single/ test-bytype/ test-modules/ test-filtered/
 	@echo "✅ All generation options tested"
 
-# Performance testing
-perf-test-generation: build ## Test generation performance
+## perf-test-generation: Test generation performance
+perf-test-generation: build
 	@echo "🏃 Generation Performance Test"
 	@echo "============================="
 	
@@ -133,8 +261,8 @@ perf-test-generation: build ## Test generation performance
 	@rm -rf large-test.json perf-test/
 	@echo "✅ Performance test completed"
 
-# Terraform validation
-validate-terraform: ## Validate generated Terraform files
+## validate-terraform: Validate generated Terraform files
+validate-terraform:
 	@echo "🔍 Terraform Validation"
 	@echo "======================"
 	
@@ -150,8 +278,8 @@ validate-terraform: ## Validate generated Terraform files
 	
 	@echo "✅ Terraform validation completed"
 
-# Clean all generated files
-clean-generated: ## Clean all generated files and test artifacts
+## clean-generated: Clean all generated files and test artifacts
+clean-generated:
 	@echo "🧹 Cleaning generated files..."
 	@rm -rf generated/ terraform-from-aws/ aws-discovered.json aws-resources.json
 	@rm -rf test-single/ test-bytype/ test-modules/ test-filtered/
@@ -159,33 +287,8 @@ clean-generated: ## Clean all generated files and test artifacts
 	@rm -rf perf-test/ large-test.json test-resources.json
 	@echo "✅ Generated files cleaned"
 
-# Phase 3 completion verification
-phase3-complete: phase3-test test-generation-options ## Mark Phase 3 as officially complete
-	@echo ""
-	@echo "🎯 PHASE 3 COMPLETION VERIFICATION"
-	@echo "=================================="
-	@$(MAKE) phase3-test
-	@echo ""
-	@echo "🎉 PHASE 3 OFFICIALLY COMPLETE!"
-	@echo ""
-	@echo "Achievements unlocked:"
-	@echo "✅ Complete generation engine with resource mapping"
-	@echo "✅ AWS resource mapper supporting 9 resource types"  
-	@echo "✅ Production Terraform generator with HCL output"
-	@echo "✅ Enhanced CLI with 15+ generation options"
-	@echo "✅ End-to-end discovery → generation workflow"
-	@echo "✅ Module generation and organization patterns"
-	@echo "✅ Comprehensive validation and testing"
-	@echo ""
-	@echo "🚀 Ready for Production Deployment!"
-	@echo ""
-	@echo "Complete workflow:"
-	@echo "  1. Discovery: ./bin/chimera discover --provider aws --region us-east-1 --output infra.json"
-	@echo "  2. Generation: ./bin/chimera generate --input infra.json --output terraform/"
-	@echo "  3. Deploy: cd terraform && terraform init && terraform plan && terraform apply"
-
-# Show generation capabilities
-demo-generation: build ## Demonstrate generation capabilities
+## demo-generation: Demonstrate generation capabilities
+demo-generation: build
 	@echo "🎬 Chimera Generation Demo"
 	@echo "========================="
 	@echo ""
@@ -226,3 +329,28 @@ demo-generation: build ## Demonstrate generation capabilities
 	@echo "   • Professional HCL generation"
 	@echo "   • Module organization patterns"
 	@echo "   • Complete validation pipeline"
+
+## phase3-complete: Mark Phase 3 as officially complete
+phase3-complete: phase3-test test-generation-options
+	@echo ""
+	@echo "🎯 PHASE 3 COMPLETION VERIFICATION"
+	@echo "=================================="
+	@$(MAKE) phase3-test
+	@echo ""
+	@echo "🎉 PHASE 3 OFFICIALLY COMPLETE!"
+	@echo ""
+	@echo "Achievements unlocked:"
+	@echo "✅ Complete generation engine with resource mapping"
+	@echo "✅ AWS resource mapper supporting 9 resource types"  
+	@echo "✅ Production Terraform generator with HCL output"
+	@echo "✅ Enhanced CLI with 15+ generation options"
+	@echo "✅ End-to-end discovery → generation workflow"
+	@echo "✅ Module generation and organization patterns"
+	@echo "✅ Comprehensive validation and testing"
+	@echo ""
+	@echo "🚀 Ready for Production Deployment!"
+	@echo ""
+	@echo "Complete workflow:"
+	@echo "  1. Discovery: ./bin/chimera discover --provider aws --region us-east-1 --output infra.json"
+	@echo "  2. Generation: ./bin/chimera generate --input infra.json --output terraform/"
+	@echo "  3. Deploy: cd terraform && terraform init && terraform plan && terraform apply"

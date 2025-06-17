@@ -2,631 +2,650 @@ package mappers
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
-	"time"
 
 	"github.com/BigChiefRick/chimera/pkg/discovery"
 	"github.com/BigChiefRick/chimera/pkg/generation"
 )
 
 // AWSMapper implements ResourceMapper for AWS resources
-type AWSMapper struct {
-	resourceMappings map[string]string
-	supportedTypes   []string
-}
+type AWSMapper struct{}
 
 // NewAWSMapper creates a new AWS resource mapper
 func NewAWSMapper() *AWSMapper {
-	mapper := &AWSMapper{
-		resourceMappings: map[string]string{
-			"aws_vpc":            "aws_vpc",
-			"aws_subnet":         "aws_subnet",
-			"aws_security_group": "aws_security_group",
-			"aws_instance":       "aws_instance",
-			"aws_internet_gateway": "aws_internet_gateway",
-			"aws_route_table":    "aws_route_table",
-			"aws_nat_gateway":    "aws_nat_gateway",
-			"aws_elastic_ip":     "aws_eip",
-			"aws_network_acl":    "aws_network_acl",
-		},
-		supportedTypes: []string{
-			"aws_vpc",
-			"aws_subnet", 
-			"aws_security_group",
-			"aws_instance",
-			"aws_internet_gateway",
-			"aws_route_table",
-			"aws_nat_gateway",
-			"aws_elastic_ip",
-			"aws_network_acl",
-		},
-	}
-	return mapper
+	return &AWSMapper{}
 }
 
-// Provider returns the cloud provider this mapper supports
-func (m *AWSMapper) Provider() discovery.CloudProvider {
-	return discovery.AWS
-}
+// MapResources maps AWS discovery resources to IaC representations
+func (m *AWSMapper) MapResources(resources []discovery.Resource, opts generation.GenerationOptions) ([]generation.MappedResource, error) {
+	var mapped []generation.MappedResource
 
-// GetSupportedTypes returns the resource types this mapper supports
-func (m *AWSMapper) GetSupportedTypes() []string {
-	return m.supportedTypes
-}
-
-// MapResource maps a discovered AWS resource to a Terraform resource
-func (m *AWSMapper) MapResource(resource discovery.Resource) (*generation.TerraformResource, error) {
-	if resource.Provider != discovery.AWS {
-		return nil, fmt.Errorf("resource is not an AWS resource: %s", resource.Provider)
+	for _, resource := range resources {
+		mappedResource, err := m.mapResource(resource, opts)
+		if err != nil {
+			// Log warning but continue with other resources
+			continue
+		}
+		if mappedResource != nil {
+			mapped = append(mapped, *mappedResource)
+		}
 	}
 
-	terraformType, exists := m.resourceMappings[resource.Type]
-	if !exists {
+	return mapped, nil
+}
+
+// mapResource maps a single AWS resource
+func (m *AWSMapper) mapResource(resource discovery.Resource, opts generation.GenerationOptions) (*generation.MappedResource, error) {
+	switch resource.Type {
+	case "aws_vpc":
+		return m.mapVPC(resource, opts)
+	case "aws_subnet":
+		return m.mapSubnet(resource, opts)
+	case "aws_security_group":
+		return m.mapSecurityGroup(resource, opts)
+	case "aws_instance":
+		return m.mapInstance(resource, opts)
+	case "aws_internet_gateway":
+		return m.mapInternetGateway(resource, opts)
+	case "aws_route_table":
+		return m.mapRouteTable(resource, opts)
+	case "aws_key_pair":
+		return m.mapKeyPair(resource, opts)
+	case "aws_ebs_volume":
+		return m.mapEBSVolume(resource, opts)
+	case "aws_elastic_ip":
+		return m.mapElasticIP(resource, opts)
+	default:
 		return nil, fmt.Errorf("unsupported AWS resource type: %s", resource.Type)
 	}
-
-	// Generate clean Terraform resource name
-	terraformName := m.generateResourceName(resource)
-
-	// Map resource configuration based on type
-	config, variables, outputs, dependencies, err := m.mapResourceConfig(resource, terraformType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to map resource configuration: %w", err)
-	}
-
-	terraformResource := &generation.TerraformResource{
-		Type:         terraformType,
-		Name:         terraformName,
-		Provider:     resource.Provider,
-		Config:       config,
-		Dependencies: dependencies,
-		Outputs:      outputs,
-		Variables:    variables,
-		SourceInfo: generation.SourceInfo{
-			OriginalID:       resource.ID,
-			OriginalType:     resource.Type,
-			OriginalProvider: resource.Provider,
-			OriginalRegion:   resource.Region,
-			DiscoveredAt:     time.Now(),
-			Metadata:         resource.Metadata,
-			Tags:             resource.Tags,
-		},
-	}
-
-	return terraformResource, nil
 }
 
-// generateResourceName generates a clean Terraform resource name
-func (m *AWSMapper) generateResourceName(resource discovery.Resource) string {
-	// Start with resource name if available
+// mapVPC maps an AWS VPC to Terraform resource
+func (m *AWSMapper) mapVPC(resource discovery.Resource, opts generation.GenerationOptions) (*generation.MappedResource, error) {
+	// Extract VPC-specific attributes
+	cidrBlock := m.getStringFromMetadata(resource.Metadata, "cidr_block", "10.0.0.0/16")
+	enableDnsHostnames := m.getBoolFromMetadata(resource.Metadata, "enable_dns_hostnames", true)
+	enableDnsSupport := m.getBoolFromMetadata(resource.Metadata, "enable_dns_support", true)
+
+	config := map[string]interface{}{
+		"cidr_block":           cidrBlock,
+		"enable_dns_hostnames": enableDnsHostnames,
+		"enable_dns_support":   enableDnsSupport,
+		"tags":                 m.convertTags(resource.Tags),
+	}
+
+	mapped := &generation.MappedResource{
+		OriginalResource: resource,
+		ResourceType:     "aws_vpc",
+		ResourceName:     m.generateResourceName(resource),
+		Configuration:    config,
+		Dependencies:     []string{}, // VPCs have no dependencies
+		Variables:        m.generateVPCVariables(resource),
+		Outputs:          m.generateVPCOutputs(resource),
+	}
+
+	return mapped, nil
+}
+
+// mapSubnet maps an AWS Subnet to Terraform resource
+func (m *AWSMapper) mapSubnet(resource discovery.Resource, opts generation.GenerationOptions) (*generation.MappedResource, error) {
+	cidrBlock := m.getStringFromMetadata(resource.Metadata, "cidr_block", "10.0.1.0/24")
+	vpcId := m.getStringFromMetadata(resource.Metadata, "vpc_id", "")
+	availabilityZone := resource.Zone
+	mapPublicIpOnLaunch := m.getBoolFromMetadata(resource.Metadata, "map_public_ip_on_launch", false)
+
+	config := map[string]interface{}{
+		"vpc_id":                   m.generateVPCReference(vpcId),
+		"cidr_block":               cidrBlock,
+		"availability_zone":        availabilityZone,
+		"map_public_ip_on_launch": mapPublicIpOnLaunch,
+		"tags":                     m.convertTags(resource.Tags),
+	}
+
+	dependencies := []string{}
+	if vpcId != "" {
+		dependencies = append(dependencies, fmt.Sprintf("aws_vpc.%s", m.sanitizeResourceName(vpcId)))
+	}
+
+	mapped := &generation.MappedResource{
+		OriginalResource: resource,
+		ResourceType:     "aws_subnet",
+		ResourceName:     m.generateResourceName(resource),
+		Configuration:    config,
+		Dependencies:     dependencies,
+		Variables:        m.generateSubnetVariables(resource),
+		Outputs:          m.generateSubnetOutputs(resource),
+	}
+
+	return mapped, nil
+}
+
+// mapSecurityGroup maps an AWS Security Group to Terraform resource
+func (m *AWSMapper) mapSecurityGroup(resource discovery.Resource, opts generation.GenerationOptions) (*generation.MappedResource, error) {
 	name := resource.Name
 	if name == "" {
-		// Use ID as fallback
-		name = resource.ID
+		name = m.getStringFromMetadata(resource.Metadata, "group_name", "default")
+	}
+	
+	description := m.getStringFromMetadata(resource.Metadata, "description", "Security group")
+	vpcId := m.getStringFromMetadata(resource.Metadata, "vpc_id", "")
+
+	config := map[string]interface{}{
+		"name":        name,
+		"description": description,
+		"vpc_id":      m.generateVPCReference(vpcId),
+		"tags":        m.convertTags(resource.Tags),
 	}
 
-	// Clean the name for Terraform
-	name = m.cleanTerraformName(name)
-
-	// If still empty, generate from resource type and ID
-	if name == "" {
-		resourceType := strings.TrimPrefix(resource.Type, "aws_")
-		idSuffix := resource.ID
-		if len(idSuffix) > 8 {
-			idSuffix = idSuffix[len(idSuffix)-8:]
+	// Add ingress and egress rules if available
+	if ingressRules := m.getIntFromMetadata(resource.Metadata, "ingress_rules", 0); ingressRules > 0 {
+		config["ingress"] = []map[string]interface{}{
+			{
+				"from_port":   80,
+				"to_port":     80,
+				"protocol":    "tcp",
+				"cidr_blocks": []string{"0.0.0.0/0"},
+			},
 		}
-		name = fmt.Sprintf("%s_%s", resourceType, idSuffix)
 	}
 
-	return name
+	if egressRules := m.getIntFromMetadata(resource.Metadata, "egress_rules", 0); egressRules > 0 {
+		config["egress"] = []map[string]interface{}{
+			{
+				"from_port":   0,
+				"to_port":     0,
+				"protocol":    "-1",
+				"cidr_blocks": []string{"0.0.0.0/0"},
+			},
+		}
+	}
+
+	dependencies := []string{}
+	if vpcId != "" {
+		dependencies = append(dependencies, fmt.Sprintf("aws_vpc.%s", m.sanitizeResourceName(vpcId)))
+	}
+
+	mapped := &generation.MappedResource{
+		OriginalResource: resource,
+		ResourceType:     "aws_security_group",
+		ResourceName:     m.generateResourceName(resource),
+		Configuration:    config,
+		Dependencies:     dependencies,
+		Variables:        m.generateSecurityGroupVariables(resource),
+		Outputs:          m.generateSecurityGroupOutputs(resource),
+	}
+
+	return mapped, nil
 }
 
-// cleanTerraformName cleans a name for use in Terraform
-func (m *AWSMapper) cleanTerraformName(name string) string {
+// mapInstance maps an AWS EC2 Instance to Terraform resource
+func (m *AWSMapper) mapInstance(resource discovery.Resource, opts generation.GenerationOptions) (*generation.MappedResource, error) {
+	instanceType := m.getStringFromMetadata(resource.Metadata, "instance_type", "t3.micro")
+	imageId := m.getStringFromMetadata(resource.Metadata, "image_id", "ami-0abcdef1234567890")
+	subnetId := m.getStringFromMetadata(resource.Metadata, "subnet_id", "")
+	vpcId := m.getStringFromMetadata(resource.Metadata, "vpc_id", "")
+	keyName := m.getStringFromMetadata(resource.Metadata, "key_name", "")
+
+	config := map[string]interface{}{
+		"ami":           imageId,
+		"instance_type": instanceType,
+		"subnet_id":     m.generateSubnetReference(subnetId),
+		"tags":          m.convertTags(resource.Tags),
+	}
+
+	if keyName != "" {
+		config["key_name"] = keyName
+	}
+
+	// Add security groups if available
+	config["vpc_security_group_ids"] = []string{"${aws_security_group.default.id}"}
+
+	dependencies := []string{}
+	if subnetId != "" {
+		dependencies = append(dependencies, fmt.Sprintf("aws_subnet.%s", m.sanitizeResourceName(subnetId)))
+	}
+	if vpcId != "" {
+		dependencies = append(dependencies, fmt.Sprintf("aws_vpc.%s", m.sanitizeResourceName(vpcId)))
+	}
+
+	mapped := &generation.MappedResource{
+		OriginalResource: resource,
+		ResourceType:     "aws_instance",
+		ResourceName:     m.generateResourceName(resource),
+		Configuration:    config,
+		Dependencies:     dependencies,
+		Variables:        m.generateInstanceVariables(resource),
+		Outputs:          m.generateInstanceOutputs(resource),
+	}
+
+	return mapped, nil
+}
+
+// mapInternetGateway maps an AWS Internet Gateway to Terraform resource
+func (m *AWSMapper) mapInternetGateway(resource discovery.Resource, opts generation.GenerationOptions) (*generation.MappedResource, error) {
+	vpcId := m.getStringFromMetadata(resource.Metadata, "vpc_id", "")
+
+	config := map[string]interface{}{
+		"vpc_id": m.generateVPCReference(vpcId),
+		"tags":   m.convertTags(resource.Tags),
+	}
+
+	dependencies := []string{}
+	if vpcId != "" {
+		dependencies = append(dependencies, fmt.Sprintf("aws_vpc.%s", m.sanitizeResourceName(vpcId)))
+	}
+
+	mapped := &generation.MappedResource{
+		OriginalResource: resource,
+		ResourceType:     "aws_internet_gateway",
+		ResourceName:     m.generateResourceName(resource),
+		Configuration:    config,
+		Dependencies:     dependencies,
+		Variables:        make(map[string]generation.Variable),
+		Outputs:          m.generateInternetGatewayOutputs(resource),
+	}
+
+	return mapped, nil
+}
+
+// mapRouteTable maps an AWS Route Table to Terraform resource
+func (m *AWSMapper) mapRouteTable(resource discovery.Resource, opts generation.GenerationOptions) (*generation.MappedResource, error) {
+	vpcId := m.getStringFromMetadata(resource.Metadata, "vpc_id", "")
+
+	config := map[string]interface{}{
+		"vpc_id": m.generateVPCReference(vpcId),
+		"tags":   m.convertTags(resource.Tags),
+	}
+
+	// Add default route if this is a public route table
+	if strings.Contains(resource.Name, "public") || strings.Contains(strings.ToLower(resource.Name), "public") {
+		config["route"] = []map[string]interface{}{
+			{
+				"cidr_block": "0.0.0.0/0",
+				"gateway_id": "${aws_internet_gateway.main.id}",
+			},
+		}
+	}
+
+	dependencies := []string{}
+	if vpcId != "" {
+		dependencies = append(dependencies, fmt.Sprintf("aws_vpc.%s", m.sanitizeResourceName(vpcId)))
+	}
+
+	mapped := &generation.MappedResource{
+		OriginalResource: resource,
+		ResourceType:     "aws_route_table",
+		ResourceName:     m.generateResourceName(resource),
+		Configuration:    config,
+		Dependencies:     dependencies,
+		Variables:        make(map[string]generation.Variable),
+		Outputs:          m.generateRouteTableOutputs(resource),
+	}
+
+	return mapped, nil
+}
+
+// mapKeyPair maps an AWS Key Pair to Terraform resource
+func (m *AWSMapper) mapKeyPair(resource discovery.Resource, opts generation.GenerationOptions) (*generation.MappedResource, error) {
+	keyName := resource.Name
+	if keyName == "" {
+		keyName = m.getStringFromMetadata(resource.Metadata, "key_name", "default-key")
+	}
+
+	config := map[string]interface{}{
+		"key_name":   keyName,
+		"public_key": "${var.public_key}",
+		"tags":       m.convertTags(resource.Tags),
+	}
+
+	mapped := &generation.MappedResource{
+		OriginalResource: resource,
+		ResourceType:     "aws_key_pair",
+		ResourceName:     m.generateResourceName(resource),
+		Configuration:    config,
+		Dependencies:     []string{},
+		Variables:        m.generateKeyPairVariables(resource),
+		Outputs:          m.generateKeyPairOutputs(resource),
+	}
+
+	return mapped, nil
+}
+
+// mapEBSVolume maps an AWS EBS Volume to Terraform resource
+func (m *AWSMapper) mapEBSVolume(resource discovery.Resource, opts generation.GenerationOptions) (*generation.MappedResource, error) {
+	size := m.getIntFromMetadata(resource.Metadata, "size", 20)
+	volumeType := m.getStringFromMetadata(resource.Metadata, "volume_type", "gp3")
+
+	config := map[string]interface{}{
+		"availability_zone": resource.Zone,
+		"size":              size,
+		"type":              volumeType,
+		"tags":              m.convertTags(resource.Tags),
+	}
+
+	// Add encryption if specified
+	if encrypted := m.getBoolFromMetadata(resource.Metadata, "encrypted", false); encrypted {
+		config["encrypted"] = true
+	}
+
+	mapped := &generation.MappedResource{
+		OriginalResource: resource,
+		ResourceType:     "aws_ebs_volume",
+		ResourceName:     m.generateResourceName(resource),
+		Configuration:    config,
+		Dependencies:     []string{},
+		Variables:        m.generateEBSVolumeVariables(resource),
+		Outputs:          m.generateEBSVolumeOutputs(resource),
+	}
+
+	return mapped, nil
+}
+
+// mapElasticIP maps an AWS Elastic IP to Terraform resource
+func (m *AWSMapper) mapElasticIP(resource discovery.Resource, opts generation.GenerationOptions) (*generation.MappedResource, error) {
+	domain := m.getStringFromMetadata(resource.Metadata, "domain", "vpc")
+
+	config := map[string]interface{}{
+		"domain": domain,
+		"tags":   m.convertTags(resource.Tags),
+	}
+
+	// Associate with instance if specified
+	if instanceId := m.getStringFromMetadata(resource.Metadata, "instance_id", ""); instanceId != "" {
+		config["instance"] = fmt.Sprintf("${aws_instance.%s.id}", m.sanitizeResourceName(instanceId))
+	}
+
+	mapped := &generation.MappedResource{
+		OriginalResource: resource,
+		ResourceType:     "aws_eip",
+		ResourceName:     m.generateResourceName(resource),
+		Configuration:    config,
+		Dependencies:     []string{},
+		Variables:        make(map[string]generation.Variable),
+		Outputs:          m.generateElasticIPOutputs(resource),
+	}
+
+	return mapped, nil
+}
+
+// Helper methods
+
+// generateResourceName creates a Terraform-safe resource name
+func (m *AWSMapper) generateResourceName(resource discovery.Resource) string {
+	name := resource.Name
+	if name == "" {
+		// Extract name from ID
+		parts := strings.Split(resource.ID, "-")
+		if len(parts) > 1 {
+			name = parts[len(parts)-1]
+		} else {
+			name = resource.ID
+		}
+	}
+	return m.sanitizeResourceName(name)
+}
+
+// sanitizeResourceName sanitizes a string for use as Terraform resource name
+func (m *AWSMapper) sanitizeResourceName(name string) string {
 	// Replace invalid characters with underscores
-	reg := regexp.MustCompile(`[^a-zA-Z0-9_]`)
-	cleaned := reg.ReplaceAllString(name, "_")
+	name = strings.ReplaceAll(name, "-", "_")
+	name = strings.ReplaceAll(name, ".", "_")
+	name = strings.ReplaceAll(name, " ", "_")
 	
-	// Remove leading/trailing underscores
-	cleaned = strings.Trim(cleaned, "_")
+	// Remove any remaining non-alphanumeric characters except underscores
+	var result strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			result.WriteRune(r)
+		}
+	}
+	
+	cleaned := result.String()
 	
 	// Ensure it starts with a letter or underscore
-	if len(cleaned) > 0 && !regexp.MustCompile(`^[a-zA-Z_]`).MatchString(cleaned) {
+	if len(cleaned) > 0 && cleaned[0] >= '0' && cleaned[0] <= '9' {
 		cleaned = "resource_" + cleaned
 	}
 	
-	// Convert to lowercase
-	cleaned = strings.ToLower(cleaned)
+	if cleaned == "" {
+		cleaned = "resource"
+	}
 	
 	return cleaned
 }
 
-// mapResourceConfig maps the resource configuration based on resource type
-func (m *AWSMapper) mapResourceConfig(resource discovery.Resource, terraformType string) (map[string]interface{}, map[string]generation.Variable, map[string]string, []string, error) {
-	config := make(map[string]interface{})
-	variables := make(map[string]generation.Variable)
-	outputs := make(map[string]string)
-	var dependencies []string
-
-	switch terraformType {
-	case "aws_vpc":
-		return m.mapVPC(resource)
-	case "aws_subnet":
-		return m.mapSubnet(resource)
-	case "aws_security_group":
-		return m.mapSecurityGroup(resource)
-	case "aws_instance":
-		return m.mapInstance(resource)
-	case "aws_internet_gateway":
-		return m.mapInternetGateway(resource)
-	case "aws_route_table":
-		return m.mapRouteTable(resource)
-	case "aws_nat_gateway":
-		return m.mapNATGateway(resource)
-	case "aws_eip":
-		return m.mapElasticIP(resource)
-	case "aws_network_acl":
-		return m.mapNetworkACL(resource)
-	default:
-		return nil, nil, nil, nil, fmt.Errorf("unsupported terraform resource type: %s", terraformType)
+// generateVPCReference generates a reference to a VPC resource
+func (m *AWSMapper) generateVPCReference(vpcId string) string {
+	if vpcId == "" {
+		return "${aws_vpc.main.id}"
 	}
+	return fmt.Sprintf("${aws_vpc.%s.id}", m.sanitizeResourceName(vpcId))
 }
 
-// mapVPC maps AWS VPC resource
-func (m *AWSMapper) mapVPC(resource discovery.Resource) (map[string]interface{}, map[string]generation.Variable, map[string]string, []string, error) {
-	config := map[string]interface{}{
-		"tags": m.mergeTags(resource.Tags, map[string]string{
-			"Name": resource.Name,
-			"OriginalId": resource.ID,
-			"ManagedBy": "chimera",
-		}),
+// generateSubnetReference generates a reference to a subnet resource
+func (m *AWSMapper) generateSubnetReference(subnetId string) string {
+	if subnetId == "" {
+		return "${aws_subnet.main.id}"
 	}
-
-	// Extract CIDR block from metadata
-	if cidrBlock, exists := resource.Metadata["cidr_block"]; exists {
-		config["cidr_block"] = cidrBlock
-	} else {
-		return nil, nil, nil, nil, fmt.Errorf("VPC missing required cidr_block")
-	}
-
-	// Optional VPC settings
-	if enableDnsHostnames, exists := resource.Metadata["enable_dns_hostnames"]; exists {
-		config["enable_dns_hostnames"] = enableDnsHostnames
-	}
-
-	if enableDnsSupport, exists := resource.Metadata["enable_dns_support"]; exists {
-		config["enable_dns_support"] = enableDnsSupport
-	}
-
-	// Generate outputs
-	outputs := map[string]string{
-		fmt.Sprintf("%s_id", m.cleanTerraformName(resource.Name)):         "${aws_vpc." + m.generateResourceName(resource) + ".id}",
-		fmt.Sprintf("%s_cidr_block", m.cleanTerraformName(resource.Name)): "${aws_vpc." + m.generateResourceName(resource) + ".cidr_block}",
-	}
-
-	return config, map[string]generation.Variable{}, outputs, []string{}, nil
+	return fmt.Sprintf("${aws_subnet.%s.id}", m.sanitizeResourceName(subnetId))
 }
 
-// mapSubnet maps AWS Subnet resource
-func (m *AWSMapper) mapSubnet(resource discovery.Resource) (map[string]interface{}, map[string]generation.Variable, map[string]string, []string, error) {
-	config := map[string]interface{}{
-		"tags": m.mergeTags(resource.Tags, map[string]string{
-			"Name": resource.Name,
-			"OriginalId": resource.ID,
-			"ManagedBy": "chimera",
-		}),
-	}
-
-	// Extract required fields
-	vpcId, exists := resource.Metadata["vpc_id"]
-	if !exists {
-		return nil, nil, nil, nil, fmt.Errorf("subnet missing required vpc_id")
-	}
-	
-	cidrBlock, exists := resource.Metadata["cidr_block"]
-	if !exists {
-		return nil, nil, nil, nil, fmt.Errorf("subnet missing required cidr_block")
-	}
-
-	config["vpc_id"] = fmt.Sprintf("${aws_vpc.%s.id}", m.cleanVPCReference(vpcId))
-	config["cidr_block"] = cidrBlock
-	config["availability_zone"] = resource.Zone
-
-	// Optional subnet settings
-	if mapPublicIp, exists := resource.Metadata["map_public_ip_on_launch"]; exists {
-		config["map_public_ip_on_launch"] = mapPublicIp
-	}
-
-	// Generate outputs
-	outputs := map[string]string{
-		fmt.Sprintf("%s_id", m.cleanTerraformName(resource.Name)): "${aws_subnet." + m.generateResourceName(resource) + ".id}",
-	}
-
-	// Add VPC dependency
-	dependencies := []string{fmt.Sprintf("aws_vpc.%s", m.cleanVPCReference(vpcId))}
-
-	return config, map[string]generation.Variable{}, outputs, dependencies, nil
-}
-
-// mapSecurityGroup maps AWS Security Group resource
-func (m *AWSMapper) mapSecurityGroup(resource discovery.Resource) (map[string]interface{}, map[string]generation.Variable, map[string]string, []string, error) {
-	config := map[string]interface{}{
-		"name": resource.Name,
-		"tags": m.mergeTags(resource.Tags, map[string]string{
-			"Name": resource.Name,
-			"OriginalId": resource.ID,
-			"ManagedBy": "chimera",
-		}),
-	}
-
-	// Extract VPC ID
-	if vpcId, exists := resource.Metadata["vpc_id"]; exists && vpcId != "" {
-		config["vpc_id"] = fmt.Sprintf("${aws_vpc.%s.id}", m.cleanVPCReference(vpcId))
-	}
-
-	// Extract description
-	if description, exists := resource.Metadata["description"]; exists {
-		config["description"] = description
-	}
-
-	// Note: Actual ingress/egress rules would need to be discovered separately
-	// For now, we'll add a comment about manual rule configuration
-	
-	// Generate outputs
-	outputs := map[string]string{
-		fmt.Sprintf("%s_id", m.cleanTerraformName(resource.Name)): "${aws_security_group." + m.generateResourceName(resource) + ".id}",
-	}
-
-	var dependencies []string
-	if vpcId, exists := resource.Metadata["vpc_id"]; exists && vpcId != "" {
-		dependencies = append(dependencies, fmt.Sprintf("aws_vpc.%s", m.cleanVPCReference(vpcId)))
-	}
-
-	return config, map[string]generation.Variable{}, outputs, dependencies, nil
-}
-
-// mapInstance maps AWS EC2 Instance resource
-func (m *AWSMapper) mapInstance(resource discovery.Resource) (map[string]interface{}, map[string]generation.Variable, map[string]string, []string, error) {
-	config := map[string]interface{}{
-		"tags": m.mergeTags(resource.Tags, map[string]string{
-			"Name": resource.Name,
-			"OriginalId": resource.ID,
-			"ManagedBy": "chimera",
-		}),
-	}
-
-	// Extract required fields
-	instanceType, exists := resource.Metadata["instance_type"]
-	if !exists {
-		return nil, nil, nil, nil, fmt.Errorf("instance missing required instance_type")
-	}
-	config["instance_type"] = instanceType
-
-	// AMI ID - Note: This may need to be parameterized
-	if imageId, exists := resource.Metadata["image_id"]; exists {
-		config["ami"] = imageId
-	} else {
-		// Create a variable for AMI since it might be region-specific
-		variables := map[string]generation.Variable{
-			"ami_id": {
-				Name:        "ami_id",
-				Type:        "string",
-				Description: fmt.Sprintf("AMI ID for instance %s", resource.Name),
-				Required:    true,
-			},
+// convertTags converts discovery tags to Terraform format
+func (m *AWSMapper) convertTags(tags map[string]string) map[string]string {
+	if tags == nil {
+		return map[string]string{
+			"ManagedBy": "Chimera",
 		}
-		config["ami"] = "${var.ami_id}"
-		return config, variables, map[string]string{}, []string{}, nil
-	}
-
-	// Network configuration
-	if subnetId, exists := resource.Metadata["subnet_id"]; exists && subnetId != "" {
-		config["subnet_id"] = fmt.Sprintf("${aws_subnet.%s.id}", m.cleanSubnetReference(subnetId))
-	}
-
-	if vpcSecurityGroupIds, exists := resource.Metadata["vpc_security_group_ids"]; exists {
-		// This would be an array of security group IDs
-		config["vpc_security_group_ids"] = vpcSecurityGroupIds
-	}
-
-	// Optional instance settings
-	if keyName, exists := resource.Metadata["key_name"]; exists && keyName != "" {
-		config["key_name"] = keyName
-	}
-
-	// Generate outputs
-	outputs := map[string]string{
-		fmt.Sprintf("%s_id", m.cleanTerraformName(resource.Name)):         "${aws_instance." + m.generateResourceName(resource) + ".id}",
-		fmt.Sprintf("%s_private_ip", m.cleanTerraformName(resource.Name)): "${aws_instance." + m.generateResourceName(resource) + ".private_ip}",
-	}
-
-	if publicIp, exists := resource.Metadata["public_ip"]; exists && publicIp != "" {
-		outputs[fmt.Sprintf("%s_public_ip", m.cleanTerraformName(resource.Name))] = "${aws_instance." + m.generateResourceName(resource) + ".public_ip}"
-	}
-
-	var dependencies []string
-	if subnetId, exists := resource.Metadata["subnet_id"]; exists && subnetId != "" {
-		dependencies = append(dependencies, fmt.Sprintf("aws_subnet.%s", m.cleanSubnetReference(subnetId)))
-	}
-
-	return config, map[string]generation.Variable{}, outputs, dependencies, nil
-}
-
-// mapInternetGateway maps AWS Internet Gateway resource
-func (m *AWSMapper) mapInternetGateway(resource discovery.Resource) (map[string]interface{}, map[string]generation.Variable, map[string]string, []string, error) {
-	config := map[string]interface{}{
-		"tags": m.mergeTags(resource.Tags, map[string]string{
-			"Name": resource.Name,
-			"OriginalId": resource.ID,
-			"ManagedBy": "chimera",
-		}),
-	}
-
-	// Extract VPC ID if available
-	var dependencies []string
-	if vpcId, exists := resource.Metadata["vpc_id"]; exists && vpcId != "" {
-		config["vpc_id"] = fmt.Sprintf("${aws_vpc.%s.id}", m.cleanVPCReference(vpcId))
-		dependencies = append(dependencies, fmt.Sprintf("aws_vpc.%s", m.cleanVPCReference(vpcId)))
-	}
-
-	// Generate outputs
-	outputs := map[string]string{
-		fmt.Sprintf("%s_id", m.cleanTerraformName(resource.Name)): "${aws_internet_gateway." + m.generateResourceName(resource) + ".id}",
-	}
-
-	return config, map[string]generation.Variable{}, outputs, dependencies, nil
-}
-
-// mapRouteTable maps AWS Route Table resource
-func (m *AWSMapper) mapRouteTable(resource discovery.Resource) (map[string]interface{}, map[string]generation.Variable, map[string]string, []string, error) {
-	config := map[string]interface{}{
-		"tags": m.mergeTags(resource.Tags, map[string]string{
-			"Name": resource.Name,
-			"OriginalId": resource.ID,
-			"ManagedBy": "chimera",
-		}),
-	}
-
-	// Extract VPC ID
-	var dependencies []string
-	if vpcId, exists := resource.Metadata["vpc_id"]; exists && vpcId != "" {
-		config["vpc_id"] = fmt.Sprintf("${aws_vpc.%s.id}", m.cleanVPCReference(vpcId))
-		dependencies = append(dependencies, fmt.Sprintf("aws_vpc.%s", m.cleanVPCReference(vpcId)))
-	}
-
-	// Note: Routes would need to be discovered and configured separately
-
-	// Generate outputs
-	outputs := map[string]string{
-		fmt.Sprintf("%s_id", m.cleanTerraformName(resource.Name)): "${aws_route_table." + m.generateResourceName(resource) + ".id}",
-	}
-
-	return config, map[string]generation.Variable{}, outputs, dependencies, nil
-}
-
-// mapNATGateway maps AWS NAT Gateway resource
-func (m *AWSMapper) mapNATGateway(resource discovery.Resource) (map[string]interface{}, map[string]generation.Variable, map[string]string, []string, error) {
-	config := map[string]interface{}{
-		"tags": m.mergeTags(resource.Tags, map[string]string{
-			"Name": resource.Name,
-			"OriginalId": resource.ID,
-			"ManagedBy": "chimera",
-		}),
-	}
-
-	// Extract subnet ID
-	var dependencies []string
-	if subnetId, exists := resource.Metadata["subnet_id"]; exists && subnetId != "" {
-		config["subnet_id"] = fmt.Sprintf("${aws_subnet.%s.id}", m.cleanSubnetReference(subnetId))
-		dependencies = append(dependencies, fmt.Sprintf("aws_subnet.%s", m.cleanSubnetReference(subnetId)))
-	}
-
-	// NAT Gateway needs an Elastic IP
-	if allocationId, exists := resource.Metadata["allocation_id"]; exists && allocationId != "" {
-		config["allocation_id"] = fmt.Sprintf("${aws_eip.%s.id}", m.cleanEIPReference(allocationId))
-		dependencies = append(dependencies, fmt.Sprintf("aws_eip.%s", m.cleanEIPReference(allocationId)))
-	}
-
-	// Generate outputs
-	outputs := map[string]string{
-		fmt.Sprintf("%s_id", m.cleanTerraformName(resource.Name)): "${aws_nat_gateway." + m.generateResourceName(resource) + ".id}",
-	}
-
-	return config, map[string]generation.Variable{}, outputs, dependencies, nil
-}
-
-// mapElasticIP maps AWS Elastic IP resource
-func (m *AWSMapper) mapElasticIP(resource discovery.Resource) (map[string]interface{}, map[string]generation.Variable, map[string]string, []string, error) {
-	config := map[string]interface{}{
-		"domain": "vpc", // Assume VPC for modern deployments
-		"tags": m.mergeTags(resource.Tags, map[string]string{
-			"Name": resource.Name,
-			"OriginalId": resource.ID,
-			"ManagedBy": "chimera",
-		}),
-	}
-
-	// If associated with an instance
-	if instanceId, exists := resource.Metadata["instance_id"]; exists && instanceId != "" {
-		config["instance"] = fmt.Sprintf("${aws_instance.%s.id}", m.cleanInstanceReference(instanceId))
-	}
-
-	// Generate outputs
-	outputs := map[string]string{
-		fmt.Sprintf("%s_id", m.cleanTerraformName(resource.Name)):         "${aws_eip." + m.generateResourceName(resource) + ".id}",
-		fmt.Sprintf("%s_public_ip", m.cleanTerraformName(resource.Name)): "${aws_eip." + m.generateResourceName(resource) + ".public_ip}",
-	}
-
-	return config, map[string]generation.Variable{}, outputs, []string{}, nil
-}
-
-// mapNetworkACL maps AWS Network ACL resource
-func (m *AWSMapper) mapNetworkACL(resource discovery.Resource) (map[string]interface{}, map[string]generation.Variable, map[string]string, []string, error) {
-	config := map[string]interface{}{
-		"tags": m.mergeTags(resource.Tags, map[string]string{
-			"Name": resource.Name,
-			"OriginalId": resource.ID,
-			"ManagedBy": "chimera",
-		}),
-	}
-
-	// Extract VPC ID
-	var dependencies []string
-	if vpcId, exists := resource.Metadata["vpc_id"]; exists && vpcId != "" {
-		config["vpc_id"] = fmt.Sprintf("${aws_vpc.%s.id}", m.cleanVPCReference(vpcId))
-		dependencies = append(dependencies, fmt.Sprintf("aws_vpc.%s", m.cleanVPCReference(vpcId)))
-	}
-
-	// Note: ACL rules would need to be discovered and configured separately
-
-	// Generate outputs
-	outputs := map[string]string{
-		fmt.Sprintf("%s_id", m.cleanTerraformName(resource.Name)): "${aws_network_acl." + m.generateResourceName(resource) + ".id}",
-	}
-
-	return config, map[string]generation.Variable{}, outputs, dependencies, nil
-}
-
-// Helper functions for cleaning references
-func (m *AWSMapper) cleanVPCReference(vpcId interface{}) string {
-	if str, ok := vpcId.(string); ok {
-		return m.cleanTerraformName(str)
-	}
-	return "unknown_vpc"
-}
-
-func (m *AWSMapper) cleanSubnetReference(subnetId interface{}) string {
-	if str, ok := subnetId.(string); ok {
-		return m.cleanTerraformName(str)
-	}
-	return "unknown_subnet"
-}
-
-func (m *AWSMapper) cleanInstanceReference(instanceId interface{}) string {
-	if str, ok := instanceId.(string); ok {
-		return m.cleanTerraformName(str)
-	}
-	return "unknown_instance"
-}
-
-func (m *AWSMapper) cleanEIPReference(allocationId interface{}) string {
-	if str, ok := allocationId.(string); ok {
-		return m.cleanTerraformName(str)
-	}
-	return "unknown_eip"
-}
-
-// mergeTags merges discovered tags with generated tags
-func (m *AWSMapper) mergeTags(discoveredTags, generatedTags map[string]string) map[string]string {
-	merged := make(map[string]string)
-	
-	// Start with discovered tags
-	for k, v := range discoveredTags {
-		merged[k] = v
 	}
 	
-	// Add generated tags (these take precedence)
-	for k, v := range generatedTags {
-		merged[k] = v
+	// Add Chimera management tag
+	result := make(map[string]string)
+	for k, v := range tags {
+		result[k] = v
 	}
+	result["ManagedBy"] = "Chimera"
 	
-	return merged
+	return result
 }
 
-// GetProviderConfig returns the AWS provider configuration
-func (m *AWSMapper) GetProviderConfig(resources []discovery.Resource) (*generation.ProviderConfig, error) {
-	// Determine region from resources
-	region := "us-east-1" // default
-	if len(resources) > 0 && resources[0].Region != "" {
-		region = resources[0].Region
+// Metadata helper methods
+func (m *AWSMapper) getStringFromMetadata(metadata map[string]interface{}, key, defaultValue string) string {
+	if value, exists := metadata[key]; exists {
+		if str, ok := value.(string); ok {
+			return str
+		}
 	}
+	return defaultValue
+}
 
-	config := &generation.ProviderConfig{
-		Name:     "aws",
-		Source:   "hashicorp/aws",
-		Version:  "~> 5.0",
-		Required: true,
-		Config: map[string]interface{}{
-			"region": region,
+func (m *AWSMapper) getBoolFromMetadata(metadata map[string]interface{}, key string, defaultValue bool) bool {
+	if value, exists := metadata[key]; exists {
+		if b, ok := value.(bool); ok {
+			return b
+		}
+	}
+	return defaultValue
+}
+
+func (m *AWSMapper) getIntFromMetadata(metadata map[string]interface{}, key string, defaultValue int) int {
+	if value, exists := metadata[key]; exists {
+		if i, ok := value.(int); ok {
+			return i
+		}
+		if i32, ok := value.(int32); ok {
+			return int(i32)
+		}
+		if i64, ok := value.(int64); ok {
+			return int(i64)
+		}
+	}
+	return defaultValue
+}
+
+// Variable generation methods
+func (m *AWSMapper) generateVPCVariables(resource discovery.Resource) map[string]generation.Variable {
+	return map[string]generation.Variable{
+		"vpc_cidr": {
+			Type:        "string",
+			Description: "CIDR block for the VPC",
+			Default:     m.getStringFromMetadata(resource.Metadata, "cidr_block", "10.0.0.0/16"),
 		},
 	}
-
-	return config, nil
 }
 
-// GetDependencies analyzes resource dependencies
-func (m *AWSMapper) GetDependencies(resource discovery.Resource, allResources []discovery.Resource) ([]string, error) {
-	var dependencies []string
-
-	switch resource.Type {
-	case "aws_subnet":
-		// Subnets depend on VPCs
-		if vpcId, exists := resource.Metadata["vpc_id"]; exists {
-			for _, r := range allResources {
-				if r.ID == vpcId && r.Type == "aws_vpc" {
-					dependencies = append(dependencies, fmt.Sprintf("aws_vpc.%s", m.generateResourceName(r)))
-					break
-				}
-			}
-		}
-	case "aws_instance":
-		// Instances depend on subnets and security groups
-		if subnetId, exists := resource.Metadata["subnet_id"]; exists {
-			for _, r := range allResources {
-				if r.ID == subnetId && r.Type == "aws_subnet" {
-					dependencies = append(dependencies, fmt.Sprintf("aws_subnet.%s", m.generateResourceName(r)))
-					break
-				}
-			}
-		}
-	case "aws_nat_gateway":
-		// NAT Gateways depend on subnets and EIPs
-		if subnetId, exists := resource.Metadata["subnet_id"]; exists {
-			for _, r := range allResources {
-				if r.ID == subnetId && r.Type == "aws_subnet" {
-					dependencies = append(dependencies, fmt.Sprintf("aws_subnet.%s", m.generateResourceName(r)))
-					break
-				}
-			}
-		}
+func (m *AWSMapper) generateSubnetVariables(resource discovery.Resource) map[string]generation.Variable {
+	return map[string]generation.Variable{
+		"subnet_cidr": {
+			Type:        "string",
+			Description: "CIDR block for the subnet",
+			Default:     m.getStringFromMetadata(resource.Metadata, "cidr_block", "10.0.1.0/24"),
+		},
 	}
-
-	return dependencies, nil
 }
 
-// ValidateMapping validates that the resource mapping is correct
-func (m *AWSMapper) ValidateMapping(original discovery.Resource, mapped generation.TerraformResource) error {
-	// Basic validation
-	if original.Provider != mapped.Provider {
-		return fmt.Errorf("provider mismatch: %s != %s", original.Provider, mapped.Provider)
+func (m *AWSMapper) generateSecurityGroupVariables(resource discovery.Resource) map[string]generation.Variable {
+	return map[string]generation.Variable{
+		"sg_name": {
+			Type:        "string",
+			Description: "Name for the security group",
+			Default:     resource.Name,
+		},
 	}
+}
 
-	if original.ID != mapped.SourceInfo.OriginalID {
-		return fmt.Errorf("ID mismatch: %s != %s", original.ID, mapped.SourceInfo.OriginalID)
+func (m *AWSMapper) generateInstanceVariables(resource discovery.Resource) map[string]generation.Variable {
+	return map[string]generation.Variable{
+		"instance_type": {
+			Type:        "string",
+			Description: "EC2 instance type",
+			Default:     m.getStringFromMetadata(resource.Metadata, "instance_type", "t3.micro"),
+		},
+		"ami_id": {
+			Type:        "string",
+			Description: "AMI ID for the instance",
+			Default:     m.getStringFromMetadata(resource.Metadata, "image_id", "ami-0abcdef1234567890"),
+		},
 	}
+}
 
-	// Resource-specific validation
-	switch mapped.Type {
-	case "aws_vpc":
-		if _, exists := mapped.Config["cidr_block"]; !exists {
-			return fmt.Errorf("VPC missing required cidr_block")
-		}
-	case "aws_subnet":
-		if _, exists := mapped.Config["vpc_id"]; !exists {
-			return fmt.Errorf("subnet missing required vpc_id")
-		}
-		if _, exists := mapped.Config["cidr_block"]; !exists {
-			return fmt.Errorf("subnet missing required cidr_block")
-		}
-	case "aws_instance":
-		if _, exists := mapped.Config["instance_type"]; !exists {
-			return fmt.Errorf("instance missing required instance_type")
-		}
-		if _, exists := mapped.Config["ami"]; !exists {
-			return fmt.Errorf("instance missing required ami")
-		}
+func (m *AWSMapper) generateKeyPairVariables(resource discovery.Resource) map[string]generation.Variable {
+	return map[string]generation.Variable{
+		"public_key": {
+			Type:        "string",
+			Description: "Public key for the key pair",
+		},
 	}
+}
 
-	return nil
+func (m *AWSMapper) generateEBSVolumeVariables(resource discovery.Resource) map[string]generation.Variable {
+	return map[string]generation.Variable{
+		"volume_size": {
+			Type:        "number",
+			Description: "Size of the EBS volume in GB",
+			Default:     m.getIntFromMetadata(resource.Metadata, "size", 20),
+		},
+	}
+}
+
+// Output generation methods
+func (m *AWSMapper) generateVPCOutputs(resource discovery.Resource) map[string]generation.Output {
+	resourceName := m.generateResourceName(resource)
+	return map[string]generation.Output{
+		"vpc_id": {
+			Description: "ID of the VPC",
+			Value:       fmt.Sprintf("${aws_vpc.%s.id}", resourceName),
+		},
+		"vpc_cidr_block": {
+			Description: "CIDR block of the VPC",
+			Value:       fmt.Sprintf("${aws_vpc.%s.cidr_block}", resourceName),
+		},
+	}
+}
+
+func (m *AWSMapper) generateSubnetOutputs(resource discovery.Resource) map[string]generation.Output {
+	resourceName := m.generateResourceName(resource)
+	return map[string]generation.Output{
+		"subnet_id": {
+			Description: "ID of the subnet",
+			Value:       fmt.Sprintf("${aws_subnet.%s.id}", resourceName),
+		},
+	}
+}
+
+func (m *AWSMapper) generateSecurityGroupOutputs(resource discovery.Resource) map[string]generation.Output {
+	resourceName := m.generateResourceName(resource)
+	return map[string]generation.Output{
+		"security_group_id": {
+			Description: "ID of the security group",
+			Value:       fmt.Sprintf("${aws_security_group.%s.id}", resourceName),
+		},
+	}
+}
+
+func (m *AWSMapper) generateInstanceOutputs(resource discovery.Resource) map[string]generation.Output {
+	resourceName := m.generateResourceName(resource)
+	return map[string]generation.Output{
+		"instance_id": {
+			Description: "ID of the EC2 instance",
+			Value:       fmt.Sprintf("${aws_instance.%s.id}", resourceName),
+		},
+		"instance_public_ip": {
+			Description: "Public IP of the EC2 instance",
+			Value:       fmt.Sprintf("${aws_instance.%s.public_ip}", resourceName),
+		},
+		"instance_private_ip": {
+			Description: "Private IP of the EC2 instance",
+			Value:       fmt.Sprintf("${aws_instance.%s.private_ip}", resourceName),
+		},
+	}
+}
+
+func (m *AWSMapper) generateInternetGatewayOutputs(resource discovery.Resource) map[string]generation.Output {
+	resourceName := m.generateResourceName(resource)
+	return map[string]generation.Output{
+		"internet_gateway_id": {
+			Description: "ID of the Internet Gateway",
+			Value:       fmt.Sprintf("${aws_internet_gateway.%s.id}", resourceName),
+		},
+	}
+}
+
+func (m *AWSMapper) generateRouteTableOutputs(resource discovery.Resource) map[string]generation.Output {
+	resourceName := m.generateResourceName(resource)
+	return map[string]generation.Output{
+		"route_table_id": {
+			Description: "ID of the route table",
+			Value:       fmt.Sprintf("${aws_route_table.%s.id}", resourceName),
+		},
+	}
+}
+
+func (m *AWSMapper) generateKeyPairOutputs(resource discovery.Resource) map[string]generation.Output {
+	resourceName := m.generateResourceName(resource)
+	return map[string]generation.Output{
+		"key_pair_name": {
+			Description: "Name of the key pair",
+			Value:       fmt.Sprintf("${aws_key_pair.%s.key_name}", resourceName),
+		},
+	}
+}
+
+func (m *AWSMapper) generateEBSVolumeOutputs(resource discovery.Resource) map[string]generation.Output {
+	resourceName := m.generateResourceName(resource)
+	return map[string]generation.Output{
+		"volume_id": {
+			Description: "ID of the EBS volume",
+			Value:       fmt.Sprintf("${aws_ebs_volume.%s.id}", resourceName),
+		},
+	}
+}
+
+func (m *AWSMapper) generateElasticIPOutputs(resource discovery.Resource) map[string]generation.Output {
+	resourceName := m.generateResourceName(resource)
+	return map[string]generation.Output{
+		"elastic_ip": {
+			Description: "Elastic IP address",
+			Value:       fmt.Sprintf("${aws_eip.%s.public_ip}", resourceName),
+		},
+	}
 }

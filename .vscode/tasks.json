@@ -1,0 +1,80 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        // ... your existing tasks ...
+        
+        {
+            "label": "Chimera: Phase 3 Test",
+            "type": "shell",
+            "command": "make",
+            "args": ["phase3-test"],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "new",
+                "showReuseMessage": true,
+                "clear": true
+            },
+            "problemMatcher": ["$go"]
+        },
+        {
+            "label": "Chimera: Phase 3 Integration Test",
+            "type": "shell",
+            "command": "./scripts/test-phase3-integration.sh",
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "new",
+                "showReuseMessage": true,
+                "clear": true
+            }
+        },
+        {
+            "label": "Chimera: Generation Demo",
+            "type": "shell",
+            "command": "make",
+            "args": ["demo-generation"],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "new",
+                "showReuseMessage": true,
+                "clear": true
+            }
+        },
+        {
+            "label": "Chimera: End-to-End Test",
+            "type": "shell",
+            "command": "make",
+            "args": ["e2e-test"],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "new",
+                "showReuseMessage": true,
+                "clear": true
+            }
+        },
+        {
+            "label": "Chimera: AWS Discover and Generate",
+            "type": "shell",
+            "command": "make",
+            "args": ["aws-discover-and-generate"],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "new",
+                "showReuseMessage": true,
+                "clear": true
+            }
+        }
+    ]
+}

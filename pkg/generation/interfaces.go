@@ -162,10 +162,12 @@ const (
 
 // GenerationWarning represents a warning during generation
 type GenerationWarning struct {
-	ResourceID string      `json:"resource_id,omitempty"`
-	Message    string      `json:"message"`
-	Type       WarningType `json:"type"`
-	Timestamp  time.Time   `json:"timestamp"`
+	ResourceID   string                 `json:"resource_id,omitempty"`
+	ResourceType string                 `json:"resource_type,omitempty"`
+	Provider     discovery.CloudProvider `json:"provider,omitempty"`
+	Message      string                 `json:"message"`
+	Type         WarningType            `json:"type"`
+	Timestamp    time.Time              `json:"timestamp"`
 }
 
 // WarningType represents the type of warning
@@ -303,6 +305,15 @@ type ResourceMapper interface {
 	// MapResources maps discovered resources to IaC representations
 	MapResources(resources []discovery.Resource, opts GenerationOptions) ([]MappedResource, error)
 	
+	// MapResource maps a single discovered resource to an IaC resource
+	MapResource(resource discovery.Resource) (*TerraformResource, error)
+	
+	// GetProviderConfig returns the provider configuration needed
+	GetProviderConfig(resources []discovery.Resource) (*ProviderConfig, error)
+	
+	// ValidateMapping validates that the mapping is correct
+	ValidateMapping(original discovery.Resource, mapped TerraformResource) error
+	
 	// GetSupportedResourceTypes returns supported resource types for this mapper
 	GetSupportedResourceTypes() []string
 	
@@ -426,6 +437,9 @@ type GenerationEngine interface {
 	
 	// GetFormatCapabilities returns capabilities for a specific format
 	GetFormatCapabilities(format IaCFormat) FormatCapabilities
+	
+	// Preview generates a preview of what would be generated
+	Preview(ctx context.Context, opts GenerationOptions) (*GenerationPreview, error)
 }
 
 // FormatCapabilities represents capabilities of an IaC format
@@ -436,13 +450,14 @@ type FormatCapabilities struct {
 	SupportsOutputs      bool                               `json:"supports_outputs"`
 	SupportsState        bool                               `json:"supports_state"`
 	SupportsImports      bool                               `json:"supports_imports"`
+	SupportsValidation   bool                               `json:"supports_validation"`
 	SupportedProviders   []discovery.CloudProvider          `json:"supported_providers"`
 	SupportedResources   map[string][]string                `json:"supported_resources"`
 	OrganizationPatterns []OrganizationPattern              `json:"organization_patterns"`
 }
 
-// PreviewResult contains the results of a generation preview
-type PreviewResult struct {
+// GenerationPreview contains the results of a generation preview
+type GenerationPreview struct {
 	ExpectedFiles    []FilePreview      `json:"expected_files"`
 	ResourceCount    int                `json:"resource_count"`
 	ProviderStats    map[discovery.CloudProvider]int `json:"provider_stats"`

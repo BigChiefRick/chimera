@@ -193,7 +193,7 @@ func (e *Engine) Generate(ctx context.Context, opts GenerationOptions) (*Generat
 
 	// Calculate provider stats
 	for _, resource := range mappedResources {
-		result.Metadata.ProviderStats[resource.Provider]++
+		result.Metadata.ProviderStats[resource.OriginalResource.Provider]++
 	}
 
 	// Calculate total lines generated
@@ -251,8 +251,8 @@ func (e *Engine) filterResources(resources []discovery.Resource, opts Generation
 }
 
 // mapResources maps discovery resources to Terraform resources
-func (e *Engine) mapResources(ctx context.Context, resources []discovery.Resource, opts GenerationOptions) ([]TerraformResource, []GenerationError, []GenerationWarning) {
-	var mapped []TerraformResource
+func (e *Engine) mapResources(ctx context.Context, resources []discovery.Resource, opts GenerationOptions) ([]MappedResource, []GenerationError, []GenerationWarning) {
+	var mapped []MappedResource
 	var errors []GenerationError
 	var warnings []GenerationWarning
 
@@ -269,7 +269,7 @@ func (e *Engine) mapResources(ctx context.Context, resources []discovery.Resourc
 			continue
 		}
 
-		terraformResource, err := mapper.MapResource(resource)
+		mappedResource, err := mapper.MapResource(resource)
 		if err != nil {
 			errors = append(errors, GenerationError{
 				ResourceID:   resource.ID,
@@ -281,25 +281,18 @@ func (e *Engine) mapResources(ctx context.Context, resources []discovery.Resourc
 			continue
 		}
 
-		mapped = append(mapped, *terraformResource)
+		mapped = append(mapped, *mappedResource)
 	}
 
 	return mapped, errors, warnings
 }
 
 // analyzeDependencies analyzes dependencies between resources
-func (e *Engine) analyzeDependencies(ctx context.Context, resources []TerraformResource) error {
-	// Convert TerraformResource back to discovery.Resource for analysis
+func (e *Engine) analyzeDependencies(ctx context.Context, resources []MappedResource) error {
+	// Convert MappedResource back to discovery.Resource for analysis
 	discoveryResources := make([]discovery.Resource, len(resources))
 	for i, resource := range resources {
-		discoveryResources[i] = discovery.Resource{
-			ID:       resource.SourceInfo.OriginalID,
-			Type:     resource.SourceInfo.OriginalType,
-			Provider: resource.SourceInfo.OriginalProvider,
-			Region:   resource.SourceInfo.OriginalRegion,
-			Metadata: resource.SourceInfo.Metadata,
-			Tags:     resource.SourceInfo.Tags,
-		}
+		discoveryResources[i] = resource.OriginalResource
 	}
 
 	dependencies, err := e.analyzer.AnalyzeDependencies(discoveryResources)
@@ -309,7 +302,7 @@ func (e *Engine) analyzeDependencies(ctx context.Context, resources []TerraformR
 
 	// Update resources with dependency information
 	for i := range resources {
-		resourceID := resources[i].SourceInfo.OriginalID
+		resourceID := resources[i].OriginalResource.ID
 		if deps, exists := dependencies[resourceID]; exists {
 			resources[i].Dependencies = deps
 		}
@@ -319,12 +312,39 @@ func (e *Engine) analyzeDependencies(ctx context.Context, resources []TerraformR
 }
 
 // organizeResources organizes resources into file structure
-func (e *Engine) organizeResources(resources []TerraformResource, opts GenerationOptions) (map[string][]TerraformResource, error) {
+func (e *Engine) organizeResources(resources []MappedResource, opts GenerationOptions) (map[string][]MappedResource, error) {
 	if e.organizer == nil {
 		// Default flat organization
-		return map[string][]TerraformResource{
+		return map[string][]MappedResource{
 			"main.tf": resources,
 		}, nil
+	}
+
+	// Convert MappedResource to TerraformResource for organizer interface
+	terraformResources := make([]TerraformResource, len(resources))
+	for i, mapped := range resources {
+		terraformResources[i] = TerraformResource{
+			Type:         mapped.ResourceType,
+			Name:         mapped.ResourceName,
+			Provider:     mapped.OriginalResource.Provider,
+			Config:       mapped.Configuration,
+			Dependencies: mapped.Dependencies,
+			Outputs:      make(map[string]string), // Convert from map[string]Output
+			Variables:    mapped.Variables,
+			SourceInfo: SourceInfo{
+				OriginalID:       mapped.OriginalResource.ID,
+				OriginalType:     mapped.OriginalResource.Type,
+				OriginalProvider: mapped.OriginalResource.Provider,
+				OriginalRegion:   mapped.OriginalResource.Region,
+				DiscoveredAt:     time.Now(), // Use current time for now
+				Metadata:         mapped.OriginalResource.Metadata,
+				Tags:             mapped.OriginalResource.Tags,
+			},
+		}
+		// Convert outputs
+		for name, output := range mapped.Outputs {
+			terraformResources[i].Outputs[name] = output.Value
+		}
 	}
 
 	organization := opts.Organization
@@ -332,11 +352,32 @@ func (e *Engine) organizeResources(resources []TerraformResource, opts Generatio
 		organization = e.config.DefaultOrg
 	}
 
-	return e.organizer.OrganizeFiles(resources, organization)
+	organizedTerraform, err := e.organizer.OrganizeFiles(terraformResources, organization)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert back to MappedResource
+	result := make(map[string][]MappedResource)
+	for path, tfResources := range organizedTerraform {
+		mappedResources := make([]MappedResource, len(tfResources))
+		for i, tfRes := range tfResources {
+			// Find the original mapped resource
+			for _, orig := range resources {
+				if orig.ResourceName == tfRes.Name && orig.ResourceType == tfRes.Type {
+					mappedResources[i] = orig
+					break
+				}
+			}
+		}
+		result[path] = mappedResources
+	}
+
+	return result, nil
 }
 
 // generateFiles generates the actual IaC files
-func (e *Engine) generateFiles(ctx context.Context, organizedFiles map[string][]TerraformResource, generator TerraformGenerator, opts GenerationOptions) ([]GeneratedFile, []GenerationError, []GenerationWarning) {
+func (e *Engine) generateFiles(ctx context.Context, organizedFiles map[string][]MappedResource, generator TerraformGenerator, opts GenerationOptions) ([]GeneratedFile, []GenerationError, []GenerationWarning) {
 	var files []GeneratedFile
 	var errors []GenerationError
 	var warnings []GenerationWarning
@@ -451,16 +492,16 @@ func (e *Engine) generateFiles(ctx context.Context, organizedFiles map[string][]
 }
 
 // generateResourceFile generates content for a single resource file
-func (e *Engine) generateResourceFile(resources []TerraformResource, generator TerraformGenerator) (string, error) {
+func (e *Engine) generateResourceFile(resources []MappedResource, generator TerraformGenerator) (string, error) {
 	var content strings.Builder
 
 	content.WriteString("# Generated by Chimera\n")
 	content.WriteString(fmt.Sprintf("# Generated at: %s\n\n", time.Now().Format(time.RFC3339)))
 
 	for _, resource := range resources {
-		resourceContent, err := generator.GenerateResource(resource)
+		resourceContent, err := generator.GenerateResourceHCL(resource)
 		if err != nil {
-			return "", fmt.Errorf("failed to generate resource %s: %w", resource.Name, err)
+			return "", fmt.Errorf("failed to generate resource %s: %w", resource.ResourceName, err)
 		}
 
 		content.WriteString(resourceContent)
@@ -471,20 +512,15 @@ func (e *Engine) generateResourceFile(resources []TerraformResource, generator T
 }
 
 // collectProviderConfigs collects all unique provider configurations needed
-func (e *Engine) collectProviderConfigs(organizedFiles map[string][]TerraformResource, opts GenerationOptions) []ProviderConfig {
+func (e *Engine) collectProviderConfigs(organizedFiles map[string][]MappedResource, opts GenerationOptions) []ProviderConfig {
 	providerMap := make(map[discovery.CloudProvider]ProviderConfig)
 
 	for _, resources := range organizedFiles {
 		for _, resource := range resources {
-			if mapper, exists := e.mappers[resource.Provider]; exists {
-				config, err := mapper.GetProviderConfig([]discovery.Resource{
-					{
-						Provider: resource.Provider,
-						Region:   resource.SourceInfo.OriginalRegion,
-					},
-				})
+			if mapper, exists := e.mappers[resource.OriginalResource.Provider]; exists {
+				config, err := mapper.GetProviderConfig([]discovery.Resource{resource.OriginalResource})
 				if err == nil {
-					providerMap[resource.Provider] = *config
+					providerMap[resource.OriginalResource.Provider] = *config
 				}
 			}
 		}
@@ -499,7 +535,7 @@ func (e *Engine) collectProviderConfigs(organizedFiles map[string][]TerraformRes
 }
 
 // collectVariables collects all variables from resources
-func (e *Engine) collectVariables(organizedFiles map[string][]TerraformResource) map[string]Variable {
+func (e *Engine) collectVariables(organizedFiles map[string][]MappedResource) map[string]Variable {
 	variables := make(map[string]Variable)
 
 	for _, resources := range organizedFiles {
@@ -521,17 +557,13 @@ func (e *Engine) collectVariables(organizedFiles map[string][]TerraformResource)
 }
 
 // collectOutputs collects all outputs from resources
-func (e *Engine) collectOutputs(organizedFiles map[string][]TerraformResource) map[string]Output {
+func (e *Engine) collectOutputs(organizedFiles map[string][]MappedResource) map[string]Output {
 	outputs := make(map[string]Output)
 
 	for _, resources := range organizedFiles {
 		for _, resource := range resources {
-			for name, outputValue := range resource.Outputs {
-				outputs[name] = Output{
-					Name:        name,
-					Value:       outputValue,
-					Description: fmt.Sprintf("Output for %s %s", resource.Type, resource.Name),
-				}
+			for name, output := range resource.Outputs {
+				outputs[name] = output
 			}
 		}
 	}

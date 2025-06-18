@@ -72,17 +72,17 @@ Phase 3: Full implementation with real Terraform generation, resource mapping,
 dependency resolution, and multi-format support.
 
 Examples:
-  # Generate Terraform from discovery results
-  chimera generate --input resources.json --format terraform --output ./terraform
+  # Generate Terraform from discovered AWS resources
+  chimera generate --input aws-resources.json --output ./terraform/
 
-  # Preview generation without creating files
-  chimera generate --input resources.json --dry-run
+  # Generate organized by resource type
+  chimera generate --input resources.json --output ./terraform/ --organize-by-type
 
-  # Generate with specific organization
-  chimera generate --input resources.json --organize-by-type --generate-modules
+  # Generate with modules
+  chimera generate --input resources.json --output ./terraform/ --generate-modules
 
-  # Filter and generate specific resources
-  chimera generate --input resources.json --provider aws --include vpc,subnet`,
+  # Preview what would be generated
+  chimera generate --input resources.json --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runGenerate(cmd.Context(), opts)
 		},
@@ -90,31 +90,29 @@ Examples:
 
 	// Input flags
 	cmd.Flags().StringVarP(&opts.InputPath, "input", "i", "", 
-		"Input file with discovered resources (JSON format)")
+		"Input file with discovered resources (required)")
 	cmd.Flags().StringVar(&opts.InputFormat, "input-format", "json", 
-		"Input file format (json)")
+		"Input format (json)")
 
 	// Output flags
 	cmd.Flags().StringVarP(&opts.OutputPath, "output", "o", "./generated", 
-		"Output directory for generated IaC files")
-	cmd.Flags().StringVarP(&opts.Format, "format", "f", "terraform", 
-		"IaC format (terraform,pulumi,cloudformation)")
-
-	// Organization flags
+		"Output directory for generated files")
+	cmd.Flags().StringVar(&opts.Format, "format", "terraform", 
+		"Output format (terraform,pulumi,cloudformation)")
 	cmd.Flags().BoolVar(&opts.OrganizeByType, "organize-by-type", false, 
-		"Organize resources by type into separate files")
+		"Organize files by resource type")
 	cmd.Flags().BoolVar(&opts.OrganizeByRegion, "organize-by-region", false, 
-		"Organize resources by region")
+		"Organize files by region")
 	cmd.Flags().BoolVar(&opts.SingleFile, "single-file", false, 
-		"Generate all resources in a single file")
+		"Generate single file with all resources")
 
 	// Generation flags
-	cmd.Flags().BoolVar(&opts.IncludeState, "include-state", true, 
-		"Include state management configuration")
+	cmd.Flags().BoolVar(&opts.IncludeState, "include-state", false, 
+		"Include state configuration")
 	cmd.Flags().BoolVar(&opts.IncludeProvider, "include-provider", true, 
 		"Include provider configuration")
 	cmd.Flags().StringVar(&opts.ProviderVersion, "provider-version", "", 
-		"Specific provider version to use")
+		"Specific provider version")
 	cmd.Flags().BoolVar(&opts.GenerateModules, "generate-modules", false, 
 		"Generate Terraform modules")
 	cmd.Flags().StringVar(&opts.ModuleStructure, "module-structure", "by_provider", 
@@ -122,9 +120,9 @@ Examples:
 
 	// Filtering flags
 	cmd.Flags().StringSliceVar(&opts.ExcludeResources, "exclude", []string{}, 
-		"Resource types to exclude")
+		"Resource IDs to exclude")
 	cmd.Flags().StringSliceVar(&opts.IncludeResources, "include", []string{}, 
-		"Resource types to include (if specified, only these will be generated)")
+		"Resource IDs to include (if specified, only these are generated)")
 	cmd.Flags().StringVar(&opts.Provider, "provider", "", 
 		"Filter by cloud provider (aws,azure,gcp)")
 	cmd.Flags().StringVar(&opts.Region, "region", "", 
@@ -205,8 +203,8 @@ func runGenerate(ctx context.Context, opts *Options) error {
 		ValidateOutput: opts.ValidateOutput,
 	})
 
-	// Register mappers
-	engine.RegisterMapper(discovery.AWS, mappers.NewAWSMapper())
+	// Register mappers - FIX: Remove discovery.AWS parameter
+	engine.RegisterMapper(mappers.NewAWSMapper())
 	// TODO: Add Azure and GCP mappers in Phase 4
 
 	// Register generators
@@ -284,21 +282,7 @@ func filterResources(resources []discovery.Resource, opts *Options) []discovery.
 		if len(opts.ResourceTypes) > 0 {
 			match := false
 			for _, resourceType := range opts.ResourceTypes {
-				if strings.Contains(resource.Type, resourceType) {
-					match = true
-					break
-				}
-			}
-			if !match {
-				continue
-			}
-		}
-
-		// Include filter
-		if len(opts.IncludeResources) > 0 {
-			match := false
-			for _, include := range opts.IncludeResources {
-				if strings.Contains(resource.Type, include) || strings.Contains(resource.Name, include) {
+				if resource.Type == resourceType {
 					match = true
 					break
 				}
@@ -310,14 +294,28 @@ func filterResources(resources []discovery.Resource, opts *Options) []discovery.
 
 		// Exclude filter
 		if len(opts.ExcludeResources) > 0 {
-			excluded := false
-			for _, exclude := range opts.ExcludeResources {
-				if strings.Contains(resource.Type, exclude) || strings.Contains(resource.Name, exclude) {
-					excluded = true
+			exclude := false
+			for _, excludeID := range opts.ExcludeResources {
+				if resource.ID == excludeID {
+					exclude = true
 					break
 				}
 			}
-			if excluded {
+			if exclude {
+				continue
+			}
+		}
+
+		// Include filter (if specified, only include these)
+		if len(opts.IncludeResources) > 0 {
+			include := false
+			for _, includeID := range opts.IncludeResources {
+				if resource.ID == includeID {
+					include = true
+					break
+				}
+			}
+			if !include {
 				continue
 			}
 		}
@@ -328,26 +326,113 @@ func filterResources(resources []discovery.Resource, opts *Options) []discovery.
 	return filtered
 }
 
-// convertToGenerationOptions converts command options to generation options
-func convertToGenerationOptions(opts *Options, resources []discovery.Resource) generation.GenerationOptions {
-	// Parse module structure
-	var moduleStructure generation.ModuleStructure
-	switch strings.ToLower(opts.ModuleStructure) {
-	case "by_provider":
-		moduleStructure = generation.ModuleByProvider
-	case "by_service":
-		moduleStructure = generation.ModuleByService
-	case "by_region":
-		moduleStructure = generation.ModuleByRegion
-	case "by_resource_type":
-		moduleStructure = generation.ModuleByResourceType
-	default:
-		moduleStructure = generation.ModuleFlat
+// showGenerationPlan displays what would be generated
+func showGenerationPlan(resources []discovery.Resource, opts *Options) error {
+	fmt.Printf("🎯 Generation Plan\n")
+	fmt.Printf("==================\n")
+	fmt.Printf("📁 Output directory: %s\n", opts.OutputPath)
+	fmt.Printf("📄 Format: %s\n", opts.Format)
+	fmt.Printf("🏗️  Resources to generate: %d\n", len(resources))
+
+	// Count by provider
+	providerCounts := make(map[string]int)
+	typeCounts := make(map[string]int)
+
+	for _, resource := range resources {
+		providerCounts[string(resource.Provider)]++
+		typeCounts[resource.Type]++
 	}
 
-	// Parse format
+	fmt.Printf("\n📊 Provider Breakdown:\n")
+	for provider, count := range providerCounts {
+		fmt.Printf("   %s: %d resources\n", provider, count)
+	}
+
+	fmt.Printf("\n🏗️  Resource Types:\n")
+	for resourceType, count := range typeCounts {
+		fmt.Printf("   %s: %d\n", resourceType, count)
+	}
+
+	fmt.Printf("\n📁 Files that would be generated:\n")
+	if opts.SingleFile {
+		fmt.Printf("   main.tf (all resources)\n")
+	} else if opts.OrganizeByType {
+		for resourceType := range typeCounts {
+			fileName := strings.ReplaceAll(resourceType, "aws_", "") + ".tf"
+			fmt.Printf("   %s\n", fileName)
+		}
+	} else {
+		fmt.Printf("   main.tf (all resources)\n")
+	}
+
+	if opts.IncludeProvider {
+		fmt.Printf("   providers.tf\n")
+	}
+	fmt.Printf("   variables.tf\n")
+	fmt.Printf("   outputs.tf\n")
+
+	if opts.GenerateModules {
+		fmt.Printf("   modules/ (organized by %s)\n", opts.ModuleStructure)
+	}
+
+	fmt.Printf("\n✅ This is what would be generated.\n")
+	fmt.Printf("Remove --dry-run to execute actual generation.\n")
+
+	return nil
+}
+
+// validateOptions validates the generate command options
+func validateOptions(opts *Options) error {
+	// Check input file exists
+	if _, err := os.Stat(opts.InputPath); os.IsNotExist(err) {
+		return fmt.Errorf("input file does not exist: %s", opts.InputPath)
+	}
+
+	// Validate format
+	validFormats := []string{"terraform", "pulumi", "cloudformation"}
+	validFormat := false
+	for _, format := range validFormats {
+		if opts.Format == format {
+			validFormat = true
+			break
+		}
+	}
+	if !validFormat {
+		return fmt.Errorf("invalid format: %s (valid: %s)", 
+			opts.Format, strings.Join(validFormats, ","))
+	}
+
+	// Validate module structure
+	validStructures := []string{"by_provider", "by_service", "by_region", "by_resource_type", "flat"}
+	validStructure := false
+	for _, structure := range validStructures {
+		if opts.ModuleStructure == structure {
+			validStructure = true
+			break
+		}
+	}
+	if !validStructure {
+		return fmt.Errorf("invalid module structure: %s (valid: %s)", 
+			opts.ModuleStructure, strings.Join(validStructures, ","))
+	}
+
+	// Validate conflicting options
+	if opts.SingleFile && opts.OrganizeByType {
+		return fmt.Errorf("cannot use --single-file with --organize-by-type")
+	}
+
+	if opts.SingleFile && opts.OrganizeByRegion {
+		return fmt.Errorf("cannot use --single-file with --organize-by-region")
+	}
+
+	return nil
+}
+
+// convertToGenerationOptions converts CLI options to generation options
+func convertToGenerationOptions(opts *Options, resources []discovery.Resource) generation.GenerationOptions {
+	// Convert format
 	var format generation.IaCFormat
-	switch strings.ToLower(opts.Format) {
+	switch opts.Format {
 	case "terraform":
 		format = generation.Terraform
 	case "pulumi":
@@ -356,6 +441,23 @@ func convertToGenerationOptions(opts *Options, resources []discovery.Resource) g
 		format = generation.CloudFormation
 	default:
 		format = generation.Terraform
+	}
+
+	// Convert module structure
+	var moduleStructure generation.ModuleStructure
+	switch opts.ModuleStructure {
+	case "by_provider":
+		moduleStructure = generation.ModuleByProvider
+	case "by_service":
+		moduleStructure = generation.ModuleByService
+	case "by_region":
+		moduleStructure = generation.ModuleByRegion
+	case "by_resource_type":
+		moduleStructure = generation.ModuleByResourceType
+	case "flat":
+		moduleStructure = generation.ModuleFlat
+	default:
+		moduleStructure = generation.ModuleByProvider
 	}
 
 	// Convert template variables
@@ -445,170 +547,24 @@ func displayResults(result *generation.GenerationResult, opts *Options) {
 	fmt.Printf("🏗️  Resources processed: %d\n", result.Metadata.ResourceCount)
 	fmt.Printf("📝 Lines generated: %d\n", result.Metadata.LinesGenerated)
 	fmt.Printf("⏱️  Duration: %v\n", result.Metadata.Duration)
-	fmt.Printf("📊 Format: %s\n", result.Metadata.Format)
 
-	// Show provider statistics
-	if len(result.Metadata.ProviderStats) > 0 {
-		fmt.Printf("\n📊 Provider Breakdown:\n")
-		for provider, count := range result.Metadata.ProviderStats {
-			fmt.Printf("   %s: %d resources\n", provider, count)
-		}
-	}
-
-	// Show files created
-	fmt.Printf("\n📄 Generated Files:\n")
-	for _, file := range result.Files {
-		fileType := ""
-		switch file.Type {
-		case generation.FileTypeMain:
-			fileType = "main"
-		case generation.FileTypeVariables:
-			fileType = "variables"
-		case generation.FileTypeOutputs:
-			fileType = "outputs"
-		case generation.FileTypeProvider:
-			fileType = "provider"
-		case generation.FileTypeModule:
-			fileType = "module"
-		default:
-			fileType = "other"
-		}
-		
-		fmt.Printf("   %s (%s, %d resources)\n", 
-			file.Path, fileType, file.ResourceCount)
-	}
-
-	// Show warnings if any
 	if len(result.Warnings) > 0 {
 		fmt.Printf("\n⚠️  Warnings:\n")
 		for _, warning := range result.Warnings {
-			fmt.Printf("   %s: %s\n", warning.Type, warning.Message)
+			fmt.Printf("   %s\n", warning.Message)
 		}
 	}
 
-	// Show errors if any
 	if len(result.Errors) > 0 {
 		fmt.Printf("\n❌ Errors:\n")
 		for _, err := range result.Errors {
-			fmt.Printf("   %s (%s): %s\n", err.ResourceType, err.Severity, err.Message)
+			fmt.Printf("   %s\n", err.Message)
 		}
 	}
 
-	// Next steps
-	fmt.Printf("\n🚀 Next Steps:\n")
-	switch opts.Format {
-	case "terraform":
-		fmt.Printf("   1. cd %s\n", opts.OutputPath)
-		fmt.Printf("   2. terraform init\n")
-		fmt.Printf("   3. terraform plan\n")
-		fmt.Printf("   4. terraform apply\n")
-	case "pulumi":
-		fmt.Printf("   1. cd %s\n", opts.OutputPath)
-		fmt.Printf("   2. pulumi stack init\n")
-		fmt.Printf("   3. pulumi preview\n")
-		fmt.Printf("   4. pulumi up\n")
-	}
-}
-
-// showGenerationPlan shows what would be generated in a dry run
-func showGenerationPlan(resources []discovery.Resource, opts *Options) error {
-	fmt.Printf("🔍 Generation Plan:\n")
-	fmt.Printf("==================\n")
-	fmt.Printf("Input: %s\n", opts.InputPath)
-	fmt.Printf("Output: %s\n", opts.OutputPath)
-	fmt.Printf("Format: %s\n", opts.Format)
-	fmt.Printf("Resources: %d\n", len(resources))
-
-	// Group by provider
-	providerCounts := make(map[discovery.CloudProvider]int)
-	typeCounts := make(map[string]int)
-	
-	for _, resource := range resources {
-		providerCounts[resource.Provider]++
-		typeCounts[resource.Type]++
-	}
-
-	fmt.Printf("\n📊 Provider Breakdown:\n")
-	for provider, count := range providerCounts {
-		fmt.Printf("   %s: %d resources\n", provider, count)
-	}
-
-	fmt.Printf("\n🏗️  Resource Types:\n")
-	for resourceType, count := range typeCounts {
-		fmt.Printf("   %s: %d\n", resourceType, count)
-	}
-
-	fmt.Printf("\n📁 Files that would be generated:\n")
-	if opts.SingleFile {
-		fmt.Printf("   main.tf (all resources)\n")
-	} else if opts.OrganizeByType {
-		for resourceType := range typeCounts {
-			fileName := strings.ReplaceAll(resourceType, "aws_", "") + ".tf"
-			fmt.Printf("   %s\n", fileName)
-		}
-	} else {
-		fmt.Printf("   main.tf (all resources)\n")
-	}
-
-	if opts.IncludeProvider {
-		fmt.Printf("   providers.tf\n")
-	}
-	fmt.Printf("   variables.tf\n")
-	fmt.Printf("   outputs.tf\n")
-
-	if opts.GenerateModules {
-		fmt.Printf("   modules/ (organized by %s)\n", opts.ModuleStructure)
-	}
-
-	fmt.Printf("\n✅ This is what would be generated.\n")
-	fmt.Printf("Remove --dry-run to execute actual generation.\n")
-
-	return nil
-}
-
-// validateOptions validates the generate command options
-func validateOptions(opts *Options) error {
-	// Check input file exists
-	if _, err := os.Stat(opts.InputPath); os.IsNotExist(err) {
-		return fmt.Errorf("input file does not exist: %s", opts.InputPath)
-	}
-
-	// Validate format
-	validFormats := []string{"terraform", "pulumi", "cloudformation"}
-	validFormat := false
-	for _, format := range validFormats {
-		if opts.Format == format {
-			validFormat = true
-			break
-		}
-	}
-	if !validFormat {
-		return fmt.Errorf("invalid format: %s (valid: %s)", 
-			opts.Format, strings.Join(validFormats, ","))
-	}
-
-	// Validate module structure
-	validStructures := []string{"by_provider", "by_service", "by_region", "by_resource_type", "flat"}
-	validStructure := false
-	for _, structure := range validStructures {
-		if opts.ModuleStructure == structure {
-			validStructure = true
-			break
-		}
-	}
-	if !validStructure {
-		return fmt.Errorf("invalid module structure: %s (valid: %s)", 
-			opts.ModuleStructure, strings.Join(validStructures, ","))
-	}
-
-	// Validate conflicting options
-	if opts.SingleFile && opts.OrganizeByType {
-		return fmt.Errorf("cannot use --single-file with --organize-by-type")
-	}
-
-	if opts.SingleFile && opts.OrganizeByRegion {
-		return fmt.Errorf("cannot use --single-file with --organize-by-region")
-	}
-
-	return nil
+	fmt.Printf("\n🚀 Ready to deploy:\n")
+	fmt.Printf("   cd %s\n", opts.OutputPath)
+	fmt.Printf("   terraform init\n")
+	fmt.Printf("   terraform plan\n")
+	fmt.Printf("   terraform apply\n")
 }

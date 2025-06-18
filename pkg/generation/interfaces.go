@@ -75,6 +75,7 @@ type GenerationOptions struct {
 	ValidateOutput   bool          `json:"validate_output"`
 	GenerateImports  bool          `json:"generate_imports"`
 	Timeout          time.Duration `json:"timeout"`
+	Timestamp        string        `json:"timestamp,omitempty"`
 }
 
 // ModuleStructure defines how to organize generated code into modules

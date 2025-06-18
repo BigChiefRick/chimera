@@ -108,6 +108,9 @@ func (e *Engine) Generate(ctx context.Context, opts GenerationOptions) (*Generat
 	if opts.Organization == "" {
 		opts.Organization = e.config.DefaultOrg
 	}
+	if opts.Timestamp == "" {
+		opts.Timestamp = time.Now().Format(time.RFC3339)
+	}
 
 	// Get generator
 	generator, exists := e.generators[opts.Format]

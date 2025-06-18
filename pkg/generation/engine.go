@@ -87,74 +87,81 @@ func (e *Engine) SetDependencyAnalyzer(analyzer DependencyAnalyzer) {
 }
 
 // SetTemplateEngine sets the template engine
-func (e *Engine) SetTemplateEngine(engine TemplateEngine) {
-	e.templateEng = engine
+func (e *Engine) SetTemplateEngine(templateEng TemplateEngine) {
+	e.templateEng = templateEng
 }
 
 // Generate generates IaC from discovered resources
 func (e *Engine) Generate(ctx context.Context, opts GenerationOptions) (*GenerationResult, error) {
+	// Start timing
 	startTime := time.Now()
-	
+
 	// Validate options
 	if err := e.ValidateOptions(opts); err != nil {
-		return nil, fmt.Errorf("invalid generation options: %w", err)
+		return nil, fmt.Errorf("invalid options: %w", err)
+	}
+
+	// Apply defaults
+	if opts.Format == "" {
+		opts.Format = e.config.DefaultFormat
+	}
+	if opts.Organization == "" {
+		opts.Organization = e.config.DefaultOrg
+	}
+
+	// Get generator
+	generator, exists := e.generators[opts.Format]
+	if !exists {
+		return nil, fmt.Errorf("no generator available for format: %s", opts.Format)
 	}
 
 	// Initialize result
 	result := &GenerationResult{
-		Files:    make([]GeneratedFile, 0),
-		Errors:   make([]GenerationError, 0),
-		Warnings: make([]GenerationWarning, 0),
+		Files: make([]GeneratedFile, 0),
 		Metadata: GenerationMetadata{
 			StartTime:     startTime,
 			Format:        opts.Format,
 			Organization:  opts.Organization,
 			ProviderStats: make(map[discovery.CloudProvider]int),
 		},
+		Errors:   make([]GenerationError, 0),
+		Warnings: make([]GenerationWarning, 0),
 	}
 
-	e.logger.Infof("Starting IaC generation for %d resources", len(opts.Resources))
-
-	// Filter resources if specified
+	// Filter resources
 	resources := e.filterResources(opts.Resources, opts)
-	e.logger.Infof("Filtered to %d resources for generation", len(resources))
+	if len(resources) == 0 {
+		return result, fmt.Errorf("no resources to generate after filtering")
+	}
 
-	// Map resources to IaC format
-	mappedResources, errors, warnings := e.mapResources(ctx, resources)
-	result.Errors = append(result.Errors, errors...)
-	result.Warnings = append(result.Warnings, warnings...)
+	// Map resources to Terraform format
+	mappedResources, mappingErrors, mappingWarnings := e.mapResources(ctx, resources, opts)
+	result.Errors = append(result.Errors, mappingErrors...)
+	result.Warnings = append(result.Warnings, mappingWarnings...)
 
 	if len(mappedResources) == 0 {
 		return result, fmt.Errorf("no resources could be mapped for generation")
 	}
 
-	e.logger.Infof("Successfully mapped %d resources", len(mappedResources))
-
-	// Analyze dependencies if needed
+	// Analyze dependencies if analyzer is available
 	if e.analyzer != nil {
-		if err := e.analyzeDependencies(mappedResources); err != nil {
-			e.logger.Warnf("Dependency analysis failed: %v", err)
+		if err := e.analyzeDependencies(ctx, mappedResources); err != nil {
 			result.Warnings = append(result.Warnings, GenerationWarning{
-				Message: fmt.Sprintf("Dependency analysis failed: %v", err),
+				Message: fmt.Sprintf("dependency analysis failed: %v", err),
 				Type:    WarningTypeBestPractice,
 			})
 		}
 	}
 
-	// Organize files based on pattern
+	// Organize resources into files
 	organizedFiles, err := e.organizeResources(mappedResources, opts)
 	if err != nil {
 		return result, fmt.Errorf("failed to organize resources: %w", err)
 	}
 
-	// Generate IaC files
-	generator, exists := e.generators[opts.Format]
-	if !exists {
-		return result, fmt.Errorf("no generator available for format: %s", opts.Format)
-	}
-
-	files, genErrors, genWarnings := e.generateFiles(ctx, organizedFiles, generator, opts)
-	result.Files = files
+	// Generate files
+	genFiles, genErrors, genWarnings := e.generateFiles(ctx, organizedFiles, generator, opts)
+	result.Files = append(result.Files, genFiles...)
 	result.Errors = append(result.Errors, genErrors...)
 	result.Warnings = append(result.Warnings, genWarnings...)
 
@@ -243,8 +250,8 @@ func (e *Engine) filterResources(resources []discovery.Resource, opts Generation
 	return filtered
 }
 
-// mapResources maps discovered resources to IaC resources
-func (e *Engine) mapResources(ctx context.Context, resources []discovery.Resource) ([]TerraformResource, []GenerationError, []GenerationWarning) {
+// mapResources maps discovery resources to Terraform resources
+func (e *Engine) mapResources(ctx context.Context, resources []discovery.Resource, opts GenerationOptions) ([]TerraformResource, []GenerationError, []GenerationWarning) {
 	var mapped []TerraformResource
 	var errors []GenerationError
 	var warnings []GenerationWarning
@@ -256,48 +263,32 @@ func (e *Engine) mapResources(ctx context.Context, resources []discovery.Resourc
 				ResourceID:   resource.ID,
 				ResourceType: resource.Type,
 				Provider:     resource.Provider,
-				Message:      fmt.Sprintf("no mapper available for provider: %s", resource.Provider),
+				Message:      fmt.Sprintf("No mapper available for provider %s", resource.Provider),
 				Severity:     ErrorSeverityHigh,
 			})
 			continue
 		}
 
-		mappedResource, err := mapper.MapResource(resource)
+		terraformResource, err := mapper.MapResource(resource)
 		if err != nil {
 			errors = append(errors, GenerationError{
 				ResourceID:   resource.ID,
 				ResourceType: resource.Type,
 				Provider:     resource.Provider,
-				Message:      fmt.Sprintf("failed to map resource: %v", err),
-				Error:        err,
+				Message:      fmt.Sprintf("Failed to map resource: %v", err),
 				Severity:     ErrorSeverityMedium,
 			})
 			continue
 		}
 
-		// Validate mapping
-		if err := mapper.ValidateMapping(resource, *mappedResource); err != nil {
-			warnings = append(warnings, GenerationWarning{
-				ResourceID:   resource.ID,
-				ResourceType: resource.Type,
-				Provider:     resource.Provider,
-				Message:      fmt.Sprintf("mapping validation warning: %v", err),
-				Type:         WarningTypeBestPractice,
-			})
-		}
-
-		mapped = append(mapped, *mappedResource)
+		mapped = append(mapped, *terraformResource)
 	}
 
 	return mapped, errors, warnings
 }
 
-// analyzeDependencies analyzes resource dependencies
-func (e *Engine) analyzeDependencies(resources []TerraformResource) error {
-	if e.analyzer == nil {
-		return nil
-	}
-
+// analyzeDependencies analyzes dependencies between resources
+func (e *Engine) analyzeDependencies(ctx context.Context, resources []TerraformResource) error {
 	// Convert TerraformResource back to discovery.Resource for analysis
 	discoveryResources := make([]discovery.Resource, len(resources))
 	for i, resource := range resources {
